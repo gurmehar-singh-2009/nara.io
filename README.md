@@ -1,15 +1,51 @@
-# nara.io
+<div align="center">
 
-[![Stand With Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner-direct.svg)](https://stand-with-ukraine.pp.ua)
+# Nara.io
 
-A prototype diep.io clone game.
+<p align=center>
+    <sub>A 2D multiplayer shooter game, your objective is to dominate other tanks!</sub>
+    <br />
+    <sub>Heavily inspired by diep.io, arras.io, and havre.io!</sub>
+</p>
 
-Features:
-- Advanced Anti Cheat
+[![Rust](https://img.shields.io/badge/Language-Rust-000000.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![WebAssembly](https://img.shields.io/badge/Target-WebAssembly-654FF0.svg?style=flat-square&logo=webassembly)](https://webassembly.org/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)
+![Code Size](https://img.shields.io/github/languages/code-size/gurmehar-singh-2009/araria?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-Web-lightgrey?style=flat-square)
+[![Stand With Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg)](https://stand-with-ukraine.pp.ua)
+
+</div>
+
+---
+> [!NOTE]
+> **Nara.io is still under active development!** More features are to come.
+
+
+## Features:
+
+- Advanced Anti Cheat utilising:
+- - Packet schema obfuscation.
+- - Behavioural anti cheat scoring system.
 - Lua Plugin support!
-- Advanced GPU renderer using WebGPU!
+- - Ability to dispatch and receive events.
+- - Ability to register administrator commands.
+- Advanced GPU rendering using WebGPU (thanks to the wgpu crate!).
+
+
+## Live Demo
+
+---
+> [!WARNING]
+> The live demonstration is not a main priority, and therefore is not obligated to stay up to date with the repository.
+> It is encouraged for you to clone the repository and host it yourself to play with your friends!
+
+A live demo of the project can be found [here](https://page.naraioserver.hackclub.app).
+
 
 ## Getting Started
+
 You will need the following installed:
 - Rust
 - Trunk
@@ -24,44 +60,56 @@ Then you can run
 chmod +x run_client.sh run_server.sh
 
 # run this in one terminal
-cd client
 ./run_client.sh
 
 # run this in another
-cd server
 ./run_server.sh
 ```
 if you are hosting locally, otherwise use the `prod` variation.
 
-## Crates usage
-i will try to refrain from importing crates that are not 1000% necessary (or that i feel like i could enjoyingly replicate functionality of), but when it will save considerable time or i think it's not worth implementing i will import certain crates.
+
+## Crates Usage
+
+I will refrain from importing unnecessary crates, or crates that I feel like I could replicate and improve functionality on. However, crates will be imported when:
+- They are practically necessary for development.
+- It will take too much time/effort to write myself.
+- Writing it myself is not considered worth it.
+
 
 ## Note on Cryptography
-this project uses a simple x25519 handshake that establishes a chacha20-poly1305 cipher. i could not bring myself to use kyber/ml-kem for this project (however i have used it previously - honestly not worth the hassle).
 
-## Unique features (i think)
-- Lua scripting. you can create mini plugins that do stuff. as well as changing configs at runtime.
-- Anti cheat. i'm pretty sure there isn't a diep.io clone with behavioural anti cheat, let this serve as the first!
+This project utilizes an [X25519](https://cryptography.io/en/latest/hazmat/primitives/asymmetric/x25519/) handshake that establishes a [ChaCha20Poly1305](https://en.wikipedia.org/wiki/ChaCha20-Poly1305) cipher.
+Unfortunately, this project will not be utilizing MlKem, however you may check out Roamer.io (link pending).
 
-stuff i haven't gotten around to implementing yet (aside from what's mentioned in crate TODO.mds)
-- useless client protections. i read if you put stuff in a worker it makes it harder...? still gonna freeze globals and detect [native code] bs but theyre generally pretty easy to bypass (deepseek does it in 1 prompt). supposed to keep skids away if they dont know anything.
+
+## Unique Features
+
+- Lua scripting. You can create plugins that can interact with the game, as well as change configs at runtime.
+- Anti cheat. More specifically: a behavioural anti cheat!
+
 
 ## Why use Rust? Why not write in JS/TS, or something else like that?
-rust is pretty cool. i like the syntax, crates and overall development cycle.
-sure, you prototype faster in typescript but it isn't as rewarding (especially since ai can 1shot typescript code).
-not to mention: performance buffs (wasm but counteracted with js interop, server (easy multi-threading)), security buff to client (wasm >>> js for skid protection).
-and truly speaking, rust has to be the future for development. better to be familiar with it before wide adoption.
+
+Rust is incredible. I love the syntax, ecosystem, and overall development cycle.
+I recognize that you may be able to prototype faster in a language like TypeScript, but for me it is not as rewarding. I understand that AI is excellent at TypeScript, and it can essentially 1-shot TypeScript code.
+
+In addition, Rust comes with performance buffs by being a lower level language with no Garbage Collector.
+
+And overall, I believe Rust is the future for technological development. A language that prevents a whole suite of bugs at compile time is what everyone dreams of!
+
 
 ## Contribution Guidelines
-i will not be accepting any feature contributions, only contributions that refactor existing code with clear benefits. final decisions will be made by me solely on what code is added, and i reserve the right to use my own discretion regardless.
 
-## Ai usage
-ai was used for converting formats like json to toml, and some feature suggestions.
-i'm refusing to use it for anything else since i want to learn from this project.
-however, i did use ai to debug certain parts, below is a list i will keep updated with files ai has contaminated:
+I will not be accepting any feature contributions. Only contributions that refactor existing code with clear, listed out benefits. Final decisions will be made by me solely on what code is accepted, and I reserve the right to use my own discretion regardless.
+
+
+## AI Usage
+
+AI was used for converting formats like JSON to TOML, and some minor feature suggestions.
+I refuse to use it for anything else, since I want to use this project as a learning opportunity.
+
+However, I did use it to debug certain sections of my code.
+Below is a list I will keep updated with what files I have used AI in:
+
 - /client/src/render/shader/fragment.wgsl
-- /client/bin/ - abused gemini to try some stuff out
-
-note to self: make sure to differ the hosted version from what's hosted here (in terms of packet chaffing) and some other stuff (otherwise its really easy to make a hack).
-im at a disadvantage since now everyone can see what mechanisms i use to protect, etc.
-also another note: make sure to redeploy every 30m-1h to refresh everything - keep a server snapshot before restart though to reset players based on ip
+- /client/bin/ - Not technically in use, experimentation.

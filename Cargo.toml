@@ -2,7 +2,8 @@
 members = ["server", "client", "shared", "tt"]
 resolver = "3"
 
-package.authors = ["username"]
+package.authors = ["Gurmehar Singh"]
+package.github = "https://github.com/gurmehar-singh-2009/nara.io"
 package.license-file = "LICENSE.md"
 
 [workspace.dependencies]

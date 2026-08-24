@@ -1,13 +1,13 @@
 #![feature(let_chains)]
 #![feature(try_blocks)]
-#![feature(yeet_expr)] // not even syntax highlighting supports this :(
+#![feature(yeet_expr)]
 #![feature(try_trait_v2_yeet)]
 #![feature(adt_const_params)]
 #![feature(const_param_ty_trait)]
 #![feature(stmt_expr_attributes)]
 #![allow(incomplete_features)]
 
-#[allow(clippy::module_inception)] // i dont think its a big deal
+#[allow(clippy::module_inception)] // I don't think it's a big deal.
 use std::sync::Arc;
 
 use ed25519_dalek::SigningKey;
@@ -55,6 +55,9 @@ async fn main() {
         .max_message_size(Some(4096))
         .max_frame_size(Some(1024));
     let signing_key = Arc::new(get_server_signing_key());
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("failed to install rustls crypto provider");
 
     let connections = Connections::new();
 
@@ -161,6 +164,7 @@ async fn main() {
             // Create an authenticated connection instance.
             let authenticated_connection = match read.next().await {
                 Some(Ok(msg)) => {
+                    println!("{}", msg);
                     if !msg.is_binary() {
                         log!("u aint even trying gng");
                         return;

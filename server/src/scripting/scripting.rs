@@ -1,15 +1,12 @@
 use std::{
-    cell::RefCell,
     collections::HashMap,
-    path::PathBuf,
-    rc::Rc,
     sync::{Arc, Mutex},
 };
 
 use mlua::{Function, Lua};
 
 use crate::{
-    entities::{entity::Entities, tank::Tanks},
+    entities::{entity::Entities},
     game::{game_state::GameEvents, scheduler::Scheduler},
     scripting::registery::{TankRegistry, WeaponRegistry, register_commands, register_events},
 };

@@ -1,6 +1,6 @@
-use mlua::{Lua, UserData};
+use mlua::UserData;
 
-use crate::entities::entity::{Entities, EntityId};
+use crate::entities::entity::EntityId;
 
 #[derive(Debug, Clone)]
 pub struct LuaPlayer(EntityId);

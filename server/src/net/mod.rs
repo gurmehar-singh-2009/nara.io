@@ -1,5 +1,3 @@
-#![feature(yeet_expr)]
-#![feature(adt_const_params)]
 #![allow(internal_features)]
 
 use std::{marker::ConstParamTy_, time::UNIX_EPOCH};

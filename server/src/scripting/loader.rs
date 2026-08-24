@@ -1,7 +1,5 @@
-use bitcode::{Decode, Encode};
 use mlua::{FromLua, Function, Lua, Table, Value};
-use sha2::digest::typenum::bit;
-use shared::packets::client_bound::{BarrelDef, TankSpec};
+use shared::packets::client_bound::TankSpec;
 
 pub struct WeaponDef {
     pub damage: f32,
