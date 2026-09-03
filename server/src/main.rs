@@ -42,15 +42,18 @@ mod errors;
 mod fs;
 mod net;
 
+/// Public key.
 const PUBLIC_KEY_BYTES: &[u8; 32] = include_bytes!("../server_key.bin");
 
+/// Returns a `SigningKey` given the public key.
 pub fn get_server_signing_key() -> SigningKey {
     SigningKey::from_bytes(PUBLIC_KEY_BYTES)
 }
 
 #[tokio::main]
 async fn main() {
-    let addr = "127.0.0.1:8080".to_string();
+    let addr = "0.0.0.1:8080".to_string();
+    // Fine tune later.
     let socket_config = WebSocketConfig::default()
         .max_message_size(Some(4096))
         .max_frame_size(Some(1024));
@@ -59,8 +62,10 @@ async fn main() {
         .install_default()
         .expect("failed to install rustls crypto provider");
 
+    // Map of all connections -> Player and vice versa.
     let connections = Connections::new();
 
+    // Channel system for the game state.
     let (game_channel_send, game_channel_recv) = unbounded_channel::<GameEvents>();
     let game_channel_send = Arc::new(game_channel_send);
     let mut game_state = match GameState::new(game_channel_recv, connections.clone()) {
@@ -70,12 +75,13 @@ async fn main() {
                 "Failed to initialize game state! Missing file or script error: {}",
                 e
             );
+
             std::process::exit(1);
         }
     };
 
-    // spawn a system thread to do the heavy calc on.
-    // we kept channels so we can send msgs via the channels to the game state.
+    // Spawn a system thread to offload our core game loop to.
+    // We utilize channels so we can actually send messages to the game state.
     tokio::task::spawn_blocking(move || {
         tokio::runtime::Handle::current().block_on(async {
             game_state.game_loop().await;
@@ -85,45 +91,49 @@ async fn main() {
     let try_socket = TcpListener::bind(addr).await;
     let listener = try_socket.expect("Failed to bind");
 
+    // Success message.
     info!("nara.io server running on port 8080!");
 
+    // For debugging purposes, the packet seed.
     log!("PACKET SEED: {}", PACKET_SEED);
 
+    // Counter for the current player id.
     let mut current_id = 0;
 
     // Read incoming socket requests.
     while let Ok((stream, addr)) = listener.accept().await {
-        // before we do anything we must check the ip.
-        let client_ip = addr.ip();
+        // The IP check is unreliable and bugs when hosting on VM.
+        // Fix it later.
+        // let client_ip = addr.ip();
 
-        if !client_ip.is_loopback() {
-            let ip = normalize_ip(&client_ip.to_string());
-            let mut is_bad_actor = false;
+        // if !client_ip.is_loopback() {
+        //     let ip = normalize_ip(&client_ip.to_string());
+        //     let mut is_bad_actor = false;
 
-            for provider in LookupProvider::all() {
-                if let Some(c) = &lookup(&ip, *provider) {
-                    is_bad_actor |= [
-                        c.connection.is_crawler,
-                        c.connection.is_datacenter,
-                        c.connection.is_vpn,
-                        c.connection.is_proxy,
-                        c.connection.is_tor,
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .any(|v| v);
+        //     for provider in LookupProvider::all() {
+        //         if let Some(c) = &lookup(&ip, *provider) {
+        //             is_bad_actor |= [
+        //                 c.connection.is_crawler,
+        //                 c.connection.is_datacenter,
+        //                 c.connection.is_vpn,
+        //                 c.connection.is_proxy,
+        //                 c.connection.is_tor,
+        //             ]
+        //             .into_iter()
+        //             .flatten()
+        //             .any(|v| v);
 
-                    if is_bad_actor {
-                        break;
-                    }
-                }
-            }
+        //             if is_bad_actor {
+        //                 break;
+        //             }
+        //         }
+        //     }
 
-            if is_bad_actor {
-                error!("closed connection due to malicious ip: {}", ip);
-                continue;
-            }
-        }
+        //     if is_bad_actor {
+        //         error!("closed connection due to malicious ip: {}", ip);
+        //         continue;
+        //     }
+        // }
 
         let ws_stream = match accept_async_with_config(stream, Some(socket_config)).await {
             Ok(ws) => ws,
@@ -184,10 +194,8 @@ async fn main() {
                         }
                     };
 
-                    // We expect the first packet to be the handshake initiation.
-                    // Otherwise we kaboom connection.
-                    // TODO: Blacklist IPs that attempt to connect without handshaking
-                    // first.
+                    // We expect the first packet to be the handshake initiation, otherwise
+                    // we disconnect the client. In the future soft ban the client based on IP.
                     match client_connection.respond_handshake(
                         &PublicKey::from(<[u8; 32]>::try_from(&decoded.handshake[..32]).unwrap()),
                         &signing_key,
