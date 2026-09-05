@@ -1,6 +1,8 @@
 use snafu::prelude::*;
 use tokio::sync::mpsc::error::SendError;
 
+use crate::fs::load_config::ConfigError;
+
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
 pub enum ServerError {
@@ -15,4 +17,19 @@ pub enum ServerError {
 
     #[snafu(display("Handshake failure"))]
     HandshakeFailure,
+
+    #[snafu(display("Error converting slice to chacha20poly1305 key type: {source}"))]
+    ConvertingSliceToKeyTypeError { source: ! },
+
+    #[snafu(display("HKDF Expansion failure during handshake exchange"))]
+    HKDFExpansionFailure { source: hkdf::InvalidLength },
+
+    #[snafu(display("Error retrieving system time"))]
+    SystemTimeError { source: std::time::SystemTimeError },
+
+    #[snafu(display("Failed to load internal configs file: {source}"))]
+    LoadConfigError { source: ConfigError },
+
+    #[snafu(display("Failed to bind to port"))]
+    PortBindFailure { source: std::io::Error },
 }

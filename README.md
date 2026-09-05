@@ -44,6 +44,10 @@
 A live demo of the project can be found [here](https://page.naraioserver.hackclub.app).
 
 
+## Performance
+
+
+
 ## Getting Started
 
 You will need the following installed:

@@ -2,8 +2,14 @@ use shared::packets::client_bound::BarrelDef;
 
 use crate::{
     entities::Entity,
-    render::{buffers::EntityInstance, colours::DARK_THEME},
+    render::{
+        buffers::EntityInstance,
+        colours::{DARK_THEME, with_alpha},
+    },
 };
+
+const FADE_IN: f32 = 0.25;
+const FADE_OUT: f32 = 0.30;
 
 pub struct Tank {
     pub id: u32,
@@ -56,9 +62,17 @@ impl Tank {
             render_health: 100.0,
 
             dying: false,
-            render_alpha: 1.0,
+            render_alpha: 0.0,
 
             barrels: vec![],
+        }
+    }
+
+    pub fn tick(&mut self, dt: f32) {
+        if self.dying {
+            self.render_alpha = (self.render_alpha - dt / FADE_OUT).max(0.0);
+        } else {
+            self.render_alpha = (self.render_alpha + dt / FADE_IN).min(1.0);
         }
     }
 }
@@ -93,21 +107,11 @@ impl Entity for Tank {
                 shape_type: 1,
                 sides: 4,
 
-                fill_color: [
-                    DARK_THEME.barrel[0],
-                    DARK_THEME.barrel[1],
-                    DARK_THEME.barrel[2],
-                    DARK_THEME.barrel[3] * self.render_alpha,
-                ],
+                fill_color: with_alpha(DARK_THEME.barrel, self.render_alpha),
 
-                border_color: [
-                    DARK_THEME.tank_outline[0],
-                    DARK_THEME.tank_outline[1],
-                    DARK_THEME.tank_outline[2],
-                    DARK_THEME.tank_outline[3] * self.render_alpha,
-                ],
+                border_color: with_alpha(DARK_THEME.barrel_outline, self.render_alpha),
 
-                border_thickness: 1.5 * self.scale,
+                border_thickness: 3.0 * self.scale,
 
                 extra_param: 1.0,
             });
@@ -125,19 +129,9 @@ impl Entity for Tank {
             shape_type: 0,
             sides: 0,
 
-            fill_color: [
-                DARK_THEME.tank_body[0],
-                DARK_THEME.tank_body[1],
-                DARK_THEME.tank_body[2],
-                DARK_THEME.tank_body[3] * self.render_alpha,
-            ],
+            fill_color: with_alpha(DARK_THEME.tank_body, self.render_alpha),
 
-            border_color: [
-                DARK_THEME.tank_outline[0],
-                DARK_THEME.tank_outline[1],
-                DARK_THEME.tank_outline[2],
-                DARK_THEME.tank_outline[3] * self.render_alpha,
-            ],
+            border_color: with_alpha(DARK_THEME.tank_outline, self.render_alpha),
 
             border_thickness: 3.0 * self.scale,
 

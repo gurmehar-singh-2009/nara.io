@@ -7,7 +7,7 @@ pub struct LuaPlayer(EntityId);
 
 #[allow(clippy::extra_unused_lifetimes)]
 impl<'a, 'b> UserData for LuaPlayer {
-    fn add_fields<F: mlua::prelude::LuaUserDataFields<Self>>(fields: &mut F) {
+    fn add_fields<F: mlua::prelude::LuaUserDataFields<Self>>(_fields: &mut F) {
         // fields.add_field_method_get("speed", |lua, this: &LuaPlayer| {
         //     let entities = lua.app_data_ref::<Entities>().unwrap();
         //     Ok(entities.speed_of(this.0))
@@ -20,6 +20,6 @@ impl<'a, 'b> UserData for LuaPlayer {
     }
 
     fn add_methods<M: mlua::prelude::LuaUserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("spawnBullet", |_, this, ()| Ok(()));
+        methods.add_method("spawnBullet", |_, _this, ()| Ok(()));
     }
 }

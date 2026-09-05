@@ -14,7 +14,10 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 
 pub mod ip_lookup;
 
-use crate::errors::{ChannelEntrySnafu, CipherEncryptSnafu, ServerError};
+use crate::errors::{
+    ChannelEntrySnafu, CipherEncryptSnafu, ConvertingSliceToKeyTypeSnafu,
+    HKDFExpansionFailureSnafu, ServerError, SystemTimeSnafu,
+};
 
 #[derive(PartialEq, Eq)]
 pub enum ConnectionState {
@@ -74,19 +77,25 @@ impl ClientConnection<{ ConnectionState::Handshaking }> {
         let mut client_to_server = [0u8; 32];
         let mut server_to_client = [0u8; 32];
 
+        // TODO: change the "client-to-server"/"server-to-client" to be randomly
+        // generated per session/restart.
         hkdf.expand(b"client-to-server", &mut client_to_server)
-            .unwrap();
+            .context(HKDFExpansionFailureSnafu)?;
 
         hkdf.expand(b"server-to-client", &mut server_to_client)
-            .unwrap();
+            .context(HKDFExpansionFailureSnafu)?;
 
-        self.send_cipher = Some(chacha20poly1305::ChaCha20Poly1305::new(Key::from_slice(
-            &server_to_client,
-        )));
+        self.send_cipher = Some(chacha20poly1305::ChaCha20Poly1305::new(
+            Key::try_from(server_to_client)
+                .context(ConvertingSliceToKeyTypeSnafu)?
+                .as_ref(),
+        ));
 
-        self.recv_cipher = Some(chacha20poly1305::ChaCha20Poly1305::new(Key::from_slice(
-            &client_to_server,
-        )));
+        self.recv_cipher = Some(chacha20poly1305::ChaCha20Poly1305::new(
+            Key::try_from(client_to_server)
+                .context(ConvertingSliceToKeyTypeSnafu)?
+                .as_ref(),
+        ));
 
         let mut handshake = [0u8; 96];
 
@@ -98,7 +107,7 @@ impl ClientConnection<{ ConnectionState::Handshaking }> {
             handshake,
             std::time::SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .context(SystemTimeSnafu)?
                 .as_secs(),
         );
 

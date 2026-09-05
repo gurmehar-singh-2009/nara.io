@@ -22,8 +22,6 @@ impl Vertex {
     }
 }
 
-// make gamestate return entity instances and just pass that to renderer
-// also make sure to push stuff earlier so it renders underneath
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct EntityInstance {
@@ -35,6 +33,9 @@ pub struct EntityInstance {
     /// 1 = Box
     /// 2 = Grid
     /// 3 = Polygon
+    /// 4 = Rounded box (filled only)
+    /// 5 = screen pill
+    /// 6 = screen circle
     pub shape_type: u32,
 
     /// 3 = Triangle
@@ -76,6 +77,21 @@ pub struct CameraUniform {
     pub camera_pos: [f32; 2],
     pub zoom: f32,
     pub aspect_ratio: f32,
+    pub screen_size: [f32; 2],
+    pub _pad: [f32; 2],
+}
+
+impl Default for CameraUniform {
+    fn default() -> Self {
+        Self {
+            view_proj: [[0.0; 4]; 4],
+            camera_pos: [0.0; 2],
+            zoom: 1.0,
+            aspect_ratio: 1.0,
+            screen_size: [1.0, 1.0],
+            _pad: [0.0; 2],
+        }
+    }
 }
 
 pub struct TextComponent {
@@ -103,7 +119,6 @@ impl TextComponent {
         }
     }
 
-    /// call this ONLY when the text actually changes (eg player takes damage)
     pub fn update_text(&mut self, font_system: &mut FontSystem, new_text: &str) {
         self.buffer.set_text(
             new_text,

@@ -269,7 +269,7 @@ impl Socket {
                                                 data.name,
                                                 Vec2::from_array([data.x, data.y]),
                                             );
-                                            entity.scale = 1.0 + (data.level - 1) as f32 * 0.08; // Slower scale growth
+                                            entity.scale = 1.0 + (data.level - 1) as f32 * 0.08;
                                             entity.barrels = data.barrels.clone();
                                             if data.is_entity_mine {
                                                 game.my_player_id = Some(data.id);
@@ -477,20 +477,23 @@ impl Socket {
                                             }
                                         }
                                         EntityType::Bullet => {
-                                            game.bullets.retain(|b| b.id != data.id)
+                                            if let Some(b) =
+                                                game.bullets.iter_mut().find(|b| b.id == data.id)
+                                            {
+                                                b.dying = true;
+                                            }
                                         }
                                     }
 
                                     if is_my_player {
                                         game.my_player_id = None;
-                                        // Show Home Screen again
                                         if let Some(window) = web_sys::window() {
                                             if let Some(document) = window.document() {
                                                 if let Some(menu) =
-                                                    document.get_element_by_id("menu")
+                                                    document.get_element_by_id("uiOverlay")
                                                 {
                                                     let _ = menu
-                                                        .set_attribute("style", "display: flex;");
+                                                        .set_attribute("style", "display: block;");
                                                 }
                                             }
                                         }

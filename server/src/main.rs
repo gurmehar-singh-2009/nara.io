@@ -1,14 +1,11 @@
-#![feature(let_chains)]
-#![feature(try_blocks)]
 #![feature(yeet_expr)]
-#![feature(try_trait_v2_yeet)]
 #![feature(adt_const_params)]
 #![feature(const_param_ty_trait)]
 #![feature(stmt_expr_attributes)]
 #![allow(incomplete_features)]
+#![allow(clippy::module_inception)] // I don't think it's a big deal.
 
-#[allow(clippy::module_inception)] // I don't think it's a big deal.
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
@@ -17,6 +14,7 @@ use shared::packets::{
     handshake::HandshakePacket,
     server_bound::{AimPacket, AutoFirePacket, MovementPacket, SpawnReqPacket},
 };
+use snafu::ResultExt;
 use tokio::{net::TcpListener, sync::mpsc::unbounded_channel};
 use tokio_tungstenite::{accept_async_with_config, tungstenite::protocol::WebSocketConfig};
 use x25519_dalek::PublicKey;
@@ -26,9 +24,12 @@ mod scripting;
 
 use paris::{error, info, log};
 
+// const TANK_TREE: std::sync::LazyLock<Vec<TankTree>> = std::sync::LazyLock::new(||
+// load_tank_tree());
 use crate::{
     entities::connections::Connections,
-    fs::tank_defs::aaa,
+    errors::{LoadConfigSnafu, PortBindFailureSnafu, ServerError},
+    fs::{load_config::Config, tank_defs::load_tank_tree},
     game::game_state::{GameEvents, GameState},
     net::{
         ClientConnection,
@@ -51,8 +52,8 @@ pub fn get_server_signing_key() -> SigningKey {
 }
 
 #[tokio::main]
-async fn main() {
-    let addr = "0.0.0.1:8080".to_string();
+async fn main() -> Result<(), ServerError> {
+    let addr = "0.0.0.0:8080".to_string();
     // Fine tune later.
     let socket_config = WebSocketConfig::default()
         .max_message_size(Some(4096))
@@ -60,15 +61,23 @@ async fn main() {
     let signing_key = Arc::new(get_server_signing_key());
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
-        .expect("failed to install rustls crypto provider");
+        .expect("rust crypto error");
 
     // Map of all connections -> Player and vice versa.
     let connections = Connections::new();
+    let tank_tree = load_tank_tree();
+    let config = Config::load("src/fs/data/config.toml").context(LoadConfigSnafu)?;
+    let config = Arc::new(config);
 
     // Channel system for the game state.
     let (game_channel_send, game_channel_recv) = unbounded_channel::<GameEvents>();
     let game_channel_send = Arc::new(game_channel_send);
-    let mut game_state = match GameState::new(game_channel_recv, connections.clone()) {
+    let mut game_state = match GameState::new(
+        game_channel_recv,
+        connections.clone(),
+        tank_tree,
+        config.clone(),
+    ) {
         Ok(state) => state,
         Err(e) => {
             eprintln!(
@@ -80,6 +89,12 @@ async fn main() {
         }
     };
 
+    game_channel_send
+        .send(GameEvents::TankTree {
+            tree: load_tank_tree(),
+        })
+        .unwrap();
+
     // Spawn a system thread to offload our core game loop to.
     // We utilize channels so we can actually send messages to the game state.
     tokio::task::spawn_blocking(move || {
@@ -89,7 +104,7 @@ async fn main() {
     });
 
     let try_socket = TcpListener::bind(addr).await;
-    let listener = try_socket.expect("Failed to bind");
+    let listener = try_socket.context(PortBindFailureSnafu)?;
 
     // Success message.
     info!("nara.io server running on port 8080!");
@@ -102,38 +117,38 @@ async fn main() {
 
     // Read incoming socket requests.
     while let Ok((stream, addr)) = listener.accept().await {
-        // The IP check is unreliable and bugs when hosting on VM.
-        // Fix it later.
-        // let client_ip = addr.ip();
+        let client_ip = addr.ip();
 
-        // if !client_ip.is_loopback() {
-        //     let ip = normalize_ip(&client_ip.to_string());
-        //     let mut is_bad_actor = false;
+        if !client_ip.is_loopback() {
+            let ip = normalize_ip(&client_ip.to_string());
+            let mut is_bad_actor = false;
 
-        //     for provider in LookupProvider::all() {
-        //         if let Some(c) = &lookup(&ip, *provider) {
-        //             is_bad_actor |= [
-        //                 c.connection.is_crawler,
-        //                 c.connection.is_datacenter,
-        //                 c.connection.is_vpn,
-        //                 c.connection.is_proxy,
-        //                 c.connection.is_tor,
-        //             ]
-        //             .into_iter()
-        //             .flatten()
-        //             .any(|v| v);
+            for provider in LookupProvider::all() {
+                if let Some(c) = &lookup(&ip, *provider) {
+                    is_bad_actor |= [
+                        c.connection.is_crawler,
+                        c.connection.is_datacenter,
+                        c.connection.is_vpn,
+                        c.connection.is_proxy,
+                        c.connection.is_tor,
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .any(|v| v);
 
-        //             if is_bad_actor {
-        //                 break;
-        //             }
-        //         }
-        //     }
+                    if is_bad_actor {
+                        break;
+                    }
+                }
+            }
 
-        //     if is_bad_actor {
-        //         error!("closed connection due to malicious ip: {}", ip);
-        //         continue;
-        //     }
-        // }
+            // The IP check is unreliable and bugs when hosting on VM.
+            // Fix it later.
+            // if is_bad_actor {
+            //     error!("closed connection due to malicious ip: {}", ip);
+            //     continue;
+            // }
+        }
 
         let ws_stream = match accept_async_with_config(stream, Some(socket_config)).await {
             Ok(ws) => ws,
@@ -293,5 +308,5 @@ async fn main() {
         });
     }
 
-    aaa();
+    Ok(())
 }

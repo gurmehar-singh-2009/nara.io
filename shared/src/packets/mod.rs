@@ -107,6 +107,7 @@ macro_rules! junk_packet {
             }
 
             impl $name {
+                #[allow(unused)]
                 pub fn new($($field_name: $field_ty,)* entropy: u64) -> Self {
                     Self {
                         _junk_a: $crate::packets::JunkData::random(entropy),

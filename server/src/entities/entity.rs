@@ -1,10 +1,15 @@
+use std::sync::Arc;
+
 use glam::Vec2;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 
-use crate::entities::{
-    bullet::Bullets,
-    shape::{ShapeKind, Shapes},
-    tank::Tanks,
+use crate::{
+    entities::{
+        bullet::Bullets,
+        shape::{ShapeKind, Shapes},
+        tank::Tanks,
+    },
+    fs::tank_defs::TankTree,
 };
 
 #[derive(Debug, Clone)]
@@ -19,12 +24,20 @@ pub struct Entities {
     pub tanks: Tanks,
     pub bullets: Bullets,
     pub shapes: Shapes,
+
+    pub tank_tree: Option<Arc<TankTree>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EntityId {
     pub index: usize,
     pub generation: u32,
+}
+
+impl Default for Entities {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Entities {
@@ -39,7 +52,12 @@ impl Entities {
             tanks: Tanks::new(256),
             bullets: Bullets::new(),
             shapes: Shapes::new(2048),
+            tank_tree: None,
         }
+    }
+
+    pub fn set_tank_tree(&mut self, tree: Arc<TankTree>) {
+        self.tank_tree = Some(tree);
     }
 
     pub fn spawn_tank(
@@ -50,7 +68,14 @@ impl Entities {
         name: String,
     ) -> EntityId {
         let id = self.spawn(position, velocity, health);
-        self.tanks.insert(id, name);
+
+        let tree = self
+            .tank_tree
+            .clone()
+            .expect("tank tree not set; call Entities::set_tank_tree before spawning tanks");
+
+        self.tanks.insert(id, name, tree);
+
         id
     }
 
@@ -96,7 +121,7 @@ impl Entities {
             && self.generations[id.index] == id.generation
     }
 
-    pub fn iter<'a>(&'a self) -> impl ParallelIterator<Item = EntityRef<'a>> {
+    pub fn iter<'b>(&'b self) -> impl ParallelIterator<Item = EntityRef<'b>> {
         #[rustfmt::skip]
         (&self.generations, &self.alive, &self.positions, &self.velocities, &self.health)
             .into_par_iter()
@@ -106,7 +131,7 @@ impl Entities {
             })
     }
 
-    pub fn iter_alive<'a>(&'a self) -> impl ParallelIterator<Item = EntityRef<'a>> {
+    pub fn iter_alive<'b>(&'b self) -> impl ParallelIterator<Item = EntityRef<'b>> {
         #[rustfmt::skip]
         (&self.generations, &self.alive, &self.positions, &self.velocities, &self.health)
             .into_par_iter()
@@ -138,7 +163,7 @@ impl Entities {
         Some(&mut self.health[id.index])
     }
 
-    pub fn iter_alive_mut<'a>(&'a mut self) -> impl ParallelIterator<Item = EntityMut<'a>> {
+    pub fn iter_alive_mut<'b>(&'b mut self) -> impl ParallelIterator<Item = EntityMut<'b>> {
         #[rustfmt::skip]
         (
             &mut self.generations,
@@ -182,15 +207,15 @@ impl Entities {
         }
     }
 
-    pub fn speed_of(&self, id: EntityId) -> f32 {
+    pub fn speed_of(&self, _id: EntityId) -> f32 {
         0.
     }
 
-    pub fn set_speed(&self, id: EntityId, vel: f32) {}
+    pub fn set_speed(&self, _id: EntityId, _vel: f32) {}
 
-    pub fn iter_alive_mut_with_tanks<'a>(
-        &'a mut self,
-    ) -> (impl ParallelIterator<Item = EntityMut<'a>> + 'a, &'a Tanks) {
+    pub fn iter_alive_mut_with_tanks<'b>(
+        &'b mut self,
+    ) -> (impl ParallelIterator<Item = EntityMut<'b>> + 'b, &'b Tanks) {
         let Entities {
             generations,
             alive,
@@ -216,7 +241,7 @@ impl Entities {
                 },
             );
 
-        (iter, &*tanks)
+        (iter, tanks)
     }
 }
 

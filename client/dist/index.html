@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>diep.10</title>
+        <title>nara.io</title>
         <!-- Tailwind CSS -->
         <script src="https://cdn.tailwindcss.com"></script>
         <!-- FontAwesome Icons -->
@@ -16,8 +16,8 @@
 
         
 <script type="module">
-import init, * as bindings from '/client-e95be0bb3da28730.js';
-const wasm = await init({ module_or_path: '/client-e95be0bb3da28730_bg.wasm' });
+import init, * as bindings from '/client-1ed9c19d69374ce2.js';
+const wasm = await init({ module_or_path: '/client-1ed9c19d69374ce2_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -47,7 +47,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 height: 100vh;
             }
 
-            /* Main Menu Card - refined borders */
             .diep-card {
                 background: #2d2d2d;
                 border: 1px solid #5a5a5a;
@@ -60,7 +59,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 position: relative;
             }
 
-            /* Navigation Header Bar */
             .nav-header {
                 background-color: #3a3a3a;
                 border-bottom: 1px solid #5a5a5a;
@@ -106,7 +104,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #dddddd;
             }
 
-            /* Server Selector Dropdown */
             .custom-dropdown-trigger {
                 background-color: #3f3f3f;
                 border: 1px solid #5a5a5a;
@@ -195,7 +192,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 box-shadow: inset 2px 0 0 #7acc7c;
             }
 
-            /* Play Button */
             .play-btn {
                 background-color: #7acc7c;
                 border: 2px solid #3c7d3d;
@@ -233,7 +229,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 box-shadow: 0 2px 0 #3c7d3d;
             }
 
-            /* Text Input */
             .nickname-input {
                 border: 1px solid #5a5a5a;
                 border-radius: 5px;
@@ -257,7 +252,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #888888;
             }
 
-            /* Top Corner Header Buttons */
             .top-btn {
                 background: #3a3a3a;
                 border: 1px solid #5a5a5a;
@@ -278,7 +272,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #ffffff;
             }
 
-            /* Notice Box */
             .notice-box {
                 background-color: #3a3a3a;
                 border: 1px solid #5a5a5a;
@@ -291,7 +284,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
             }
 
-            /* Canvas Overlay */
             #gameCanvas {
                 position: absolute;
                 top: 0;
@@ -302,7 +294,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 display: none;
             }
 
-            /* Discord Pill */
             .discord-btn {
                 background: #3a3a3a;
                 border: 1px solid #5a5a5a;
@@ -327,7 +318,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #ffffff;
             }
 
-            /* Social Icons */
             .social-btn {
                 background: #3a3a3a;
                 border: 1px solid #5a5a5a;
@@ -378,7 +368,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 background-color: rgba(0, 0, 0, 0.5);
             }
 
-            /* Sliding Side Drawer */
             .side-drawer {
                 position: fixed;
                 top: 0;
@@ -424,7 +413,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 pointer-events: auto;
             }
 
-            /* Toggle Switch */
             .diep-switch {
                 position: relative;
                 display: inline-block;
@@ -483,7 +471,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #dddddd;
             }
 
-            /* ========== LIGHT THEME OVERRIDES ========== */
             body.light-theme {
                 background-color: #e8ecf1;
                 color: #1a1a1a;
@@ -708,7 +695,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #333333;
             }
 
-            /* Drawer-specific light overrides for Tailwind arbitrary bg classes */
             body.light-theme .side-drawer .space-y-2 > label {
                 background-color: #f0f0f0 !important;
                 border-color: #c8c8c8 !important;
@@ -771,7 +757,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #333333 !important;
             }
 
-            /* UI overlay light text adjustments */
             body.light-theme .discord-btn .text-gray-200 {
                 color: #444444 !important;
             }
@@ -789,12 +774,10 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #555555 !important;
             }
 
-            /* Notice box text in main card */
             body.light-theme .notice-box p {
                 color: #444444;
             }
 
-            /* Tab content text overrides */
             body.light-theme .tab-content .text-gray-100 {
                 color: #1a1a1a !important;
             }
@@ -807,7 +790,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 border-color: #d0d0d0 !important;
             }
 
-            /* Nav header icons */
             body.light-theme .diep-card svg rect {
                 fill: #999999;
                 stroke: #777777;
@@ -822,7 +804,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 fill: #b0b0b0;
             }
 
-            /* Server select dropdown in drawer */
             body.light-theme #rendererSelect {
                 background-color: #f5f5f5;
                 border-color: #c8c8c8;
@@ -834,7 +815,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #333333;
             }
 
-            /* FPS counter and other colored spans in drawer */
             body.light-theme .side-drawer .text-emerald-400 {
                 color: #2d8a4e !important;
             }
@@ -847,27 +827,22 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #b8860b !important;
             }
 
-            /* Tab text-gray-400 overrides */
             body.light-theme .text-gray-400 {
                 color: #666666 !important;
             }
 
-            /* Text gray-100 overrides in main UI */
             body.light-theme .text-gray-100 {
                 color: #1a1a1a !important;
             }
 
-            /* Community links section text */
             body.light-theme .side-drawer .pt-2.border-t .text-gray-400 {
                 color: #666666 !important;
             }
 
-            /* The "gng" footer in drawer */
             body.light-theme .side-drawer .text-gray-500 {
                 color: #777777 !important;
             }
 
-            /* top-btn text-gray-300 overrides */
             body.light-theme .top-btn .text-gray-300 {
                 color: #555555 !important;
             }
@@ -876,7 +851,7 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #555555 !important;
             }
         </style>
-    <link rel="modulepreload" href="/client-e95be0bb3da28730.js" crossorigin="anonymous" integrity="sha384-wFSHeQqSVKLSn8RCiL3LDkrEh9LHErwSX1GBnoqYrzEk1bXW9nPfxrWH0RVcBKAq"><link rel="preload" href="/client-e95be0bb3da28730_bg.wasm" crossorigin="anonymous" integrity="sha384-SL00JmyawBzDQynccjNyO/CwtaOPouJ1c/Q/XvX8Ct6gemPuiZ/WfSrQaZAebwhB" as="fetch" type="application/wasm"></head>
+    <link rel="modulepreload" href="/client-1ed9c19d69374ce2.js" crossorigin="anonymous" integrity="sha384-69VY/K1J32YKX3P3OYjXuzpYO2Jq+Cx2qXNOUa3EKvr6juHrF4DMu2itnWn09I8X"><link rel="preload" href="/client-1ed9c19d69374ce2_bg.wasm" crossorigin="anonymous" integrity="sha384-hL64tyydBffFM6FNOhu4tfaTirEsGrfqsbjirhMmNHsN2IZ79vNIzQ+HmRGWj0ex" as="fetch" type="application/wasm"></head>
     <body
         class="h-screen w-screen relative flex flex-col justify-between p-3 overflow-hidden"
     >
@@ -1027,7 +1002,7 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                         >
                         <div class="grid grid-cols-2 gap-2 text-center text-xs">
                             <a
-                                href="https://diep.io"
+                                href="https://naraio.dev"
                                 target="_blank"
                                 class="top-btn py-1.5 flex items-center justify-center gap-1.5 no-underline"
                             >
@@ -1308,10 +1283,10 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                             <h3
                                 class="font-bold text-base text-gray-100 border-b border-gray-600 pb-1"
                             >
-                                About diep.10
+                                About nara.io
                             </h3>
                             <p class="text-xs font-semibold">
-                                diep.10 is a fast-paced multiplayer tank arena
+                                nara.io is a fast-paced multiplayer tank arena
                                 survival game. Shoot shapes, level up your
                                 stats, upgrade your class, and dominate the
                                 leaderboard!

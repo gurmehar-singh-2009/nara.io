@@ -3,6 +3,8 @@ struct CameraUniform {
     camera_pos: vec2<f32>,
     zoom: f32,
     aspect_ratio: f32,
+    screen_size: vec2<f32>,
+    _pad: vec2<f32>,
 };
 
 @group(0) @binding(0)
@@ -51,21 +53,26 @@ fn vs_main(
 
     let local_position = QUAD_VERTICES[vertex_index];
 
-    let cos_r = cos(instance.rotation);
-    let sin_r = sin(instance.rotation);
+    if (instance.shape_type == 5u || instance.shape_type == 6u || instance.shape_type == 7u) {
+        let ndc = instance.pos + local_position * (instance.size * 0.5);
+        out.clip_position = vec4<f32>(ndc, 0.0, 1.0);
+        out.world_pos = instance.pos;
+    } else {
+        let cos_r = cos(instance.rotation);
+        let sin_r = sin(instance.rotation);
 
-    let rot_mat = mat2x2<f32>(cos_r, sin_r, -sin_r, cos_r);
+        let rot_mat = mat2x2<f32>(cos_r, sin_r, -sin_r, cos_r);
 
-    let local_scaled = local_position * (instance.size * 0.5);
-    let rotated_pos = rot_mat * local_scaled;
-    let world_pos = instance.pos + rotated_pos;
+        let local_scaled = local_position * (instance.size * 0.5);
+        let rotated_pos = rot_mat * local_scaled;
+        let world_pos = instance.pos + rotated_pos;
 
-    let rel_pos = (world_pos - camera.camera_pos) * camera.zoom;
-    let screen_pos = vec2<f32>(rel_pos.x / camera.aspect_ratio, rel_pos.y);
+        let rel_pos = (world_pos - camera.camera_pos) * camera.zoom;
+        out.clip_position = vec4<f32>(rel_pos.x / camera.aspect_ratio, rel_pos.y, 0.0, 1.0);
+        out.world_pos = world_pos;
+    }
 
-    out.clip_position = vec4<f32>(screen_pos, 0.0, 1.0);
     out.uv = local_position;
-    out.world_pos = world_pos;
     out.shape_type = instance.shape_type;
     out.sides = instance.sides;
     out.fill_color = instance.fill_color;

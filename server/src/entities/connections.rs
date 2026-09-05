@@ -49,12 +49,12 @@ impl Connections {
 
     pub fn send_to<P: Packet>(&self, id: u32, packet: P) {
         if let Some(mut conn) = self.inner.get_mut(&id) {
-            println!(
-                "SENDING packet: type={}, wire_id={}, logical_id={}",
-                std::any::type_name::<P>(),
-                P::ID,
-                P::ID ^ shared::packets::PACKET_SEED,
-            );
+            // println!(
+            //     "SENDING packet: type={}, wire_id={}, logical_id={}",
+            //     std::any::type_name::<P>(),
+            //     P::ID,
+            //     P::ID ^ shared::packets::PACKET_SEED,
+            // );
 
             if let Err(err) = conn.send(packet) {
                 error!("failed to send to {id}: {err}");

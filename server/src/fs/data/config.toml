@@ -1,0 +1,16 @@
+[game]
+max_players = 60
+max_level = 45
+
+[world]
+size = 2048
+max_shapes = 2000
+
+[player]
+speed = 140
+radius = 20
+default_health = 100
+
+[bullet]
+size = 8
+lifetime = 1

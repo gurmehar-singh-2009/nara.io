@@ -1,5 +1,11 @@
 use crate::entities::{bullet::Bullet, square::Shape, tank::Tank};
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChatChannel {
+    Global,
+    Team,
+}
+
 pub struct GameState {
     pub my_player_id: Option<u32>,
     pub players: Vec<Tank>,
@@ -22,6 +28,16 @@ pub struct GameState {
     pub max_health: u32,
 
     pub leaderboard: Vec<(String, u32)>,
+
+    pub upgrade_request: Option<u8>,
+    pub upgrade_levels: [u8; 8],
+
+    pub chat_message: Option<String>,
+    pub chat_channel: ChatChannel,
+    pub incoming_chat: Vec<(ChatChannel, String)>,
+
+    pub class_upgrades_available: bool,
+    pub class_choice: Option<u8>,
 }
 
 impl GameState {
@@ -46,5 +62,21 @@ impl GameState {
 
         let direction = glam::Vec2::new(x as f32, y as f32);
         self.movement_dir = Some(direction.y.atan2(direction.x));
+    }
+
+    pub fn tick_render(&mut self, dt: f32) {
+        for t in &mut self.players {
+            t.tick(dt);
+        }
+        for s in &mut self.shapes {
+            s.tick(dt);
+        }
+        for b in &mut self.bullets {
+            b.tick(dt);
+        }
+
+        self.players.retain(|p| !(p.dying && p.render_alpha <= 0.0));
+        self.shapes.retain(|s| !(s.dying && s.render_alpha <= 0.0));
+        self.bullets.retain(|b| !(b.dying && b.render_alpha <= 0.0));
     }
 }

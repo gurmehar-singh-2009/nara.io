@@ -1,7 +1,13 @@
 use crate::{
     entities::Entity,
-    render::{buffers::EntityInstance, colours::DARK_THEME},
+    render::{
+        buffers::EntityInstance,
+        colours::{DARK_THEME, with_alpha},
+    },
 };
+
+const FADE_IN: f32 = 0.20;
+const FADE_OUT: f32 = 0.30;
 
 pub struct Shape {
     pub id: u32,
@@ -46,7 +52,15 @@ impl Shape {
             max_health,
             render_health: max_health as f32,
             dying: false,
-            render_alpha: 1.0,
+            render_alpha: 0.0,
+        }
+    }
+
+    pub fn tick(&mut self, dt: f32) {
+        if self.dying {
+            self.render_alpha = (self.render_alpha - dt / FADE_OUT).max(0.0);
+        } else {
+            self.render_alpha = (self.render_alpha + dt / FADE_IN).min(1.0);
         }
     }
 }
@@ -59,18 +73,8 @@ impl Entity for Shape {
             rotation: self.render_rot,
             shape_type: 3,
             sides: self.sides,
-            fill_color: [
-                self.fill_color[0],
-                self.fill_color[1],
-                self.fill_color[2],
-                self.fill_color[3] * self.render_alpha,
-            ],
-            border_color: [
-                DARK_THEME.border[0],
-                DARK_THEME.border[1],
-                DARK_THEME.border[2],
-                DARK_THEME.border[3] * self.render_alpha,
-            ],
+            fill_color: with_alpha(self.fill_color, self.render_alpha),
+            border_color: with_alpha(DARK_THEME.border, self.render_alpha),
             border_thickness: 3.0,
             extra_param: 1.,
         }]

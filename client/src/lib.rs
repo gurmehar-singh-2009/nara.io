@@ -54,6 +54,14 @@ pub async fn start() {
         max_health: 100,
 
         leaderboard: vec![],
+        upgrade_request: None,
+        upgrade_levels: [0u8; 8],
+
+        chat_message: None,
+        chat_channel: structs::game_state::ChatChannel::Global,
+        incoming_chat: Vec::new(),
+        class_upgrades_available: false,
+        class_choice: None,
     }));
     let game_state_for_socket = Rc::clone(&game_state);
 
@@ -61,7 +69,7 @@ pub async fn start() {
         let game_state = Rc::clone(&game_state_for_socket);
 
         spawn_local(async move {
-            Socket::new(game_state, "wss://naraioserver.hackclub.app".into()).await;
+            Socket::new(game_state, "ws://localhost:8080".into()).await;
         });
     });
 

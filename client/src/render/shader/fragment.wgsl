@@ -1,4 +1,14 @@
-const PI: f32 = 3.14159265359;
+struct CameraUniform {
+    view_proj: mat4x4<f32>,
+    camera_pos: vec2<f32>,
+    zoom: f32,
+    aspect_ratio: f32,
+    screen_size: vec2<f32>,
+    _pad: vec2<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> camera: CameraUniform;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -12,6 +22,8 @@ struct VertexOutput {
     @location(7) @interpolate(flat) extra_param: f32,
     @location(8) @interpolate(flat) size: vec2<f32>,
 };
+
+const PI: f32 = 3.14159265359;
 
 fn draw_grid(
     world_pos: vec2<f32>,
@@ -42,11 +54,42 @@ fn draw_grid(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let uv_fwidth = fwidth(in.uv);
+    let delta = max(uv_fwidth.x, uv_fwidth.y);
+
     let world_fwidth = fwidth(in.world_pos);
     let grid_line_aa = max(world_fwidth.x, world_fwidth.y);
 
-    let uv_fwidth = fwidth(in.uv);
-    let delta = max(uv_fwidth.x, uv_fwidth.y);
+    let half_px = in.size * (camera.screen_size * 0.25);
+    let p = in.uv * half_px;
+    let p_fwidth = fwidth(p);
+    let ui_aa = max(p_fwidth.x, p_fwidth.y);
+
+    if (in.shape_type == 5u || in.shape_type == 6u || in.shape_type == 7u) {
+        var dist: f32;
+        if (in.shape_type == 5u) {
+            let r = min(half_px.x, half_px.y);
+            let q = abs(p) - (half_px - vec2<f32>(r, r));
+            dist = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+        } else if (in.shape_type == 6u) {
+            dist = length(p) - min(half_px.x, half_px.y);
+        } else {
+            let r = clamp(in.extra_param, 0.0, min(half_px.x, half_px.y));
+            let q = abs(p) - (half_px - vec2<f32>(r, r));
+            dist = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+        }
+
+        let alpha = 1.0 - smoothstep(-ui_aa, ui_aa, dist);
+        if (alpha < 0.001) {
+            discard;
+        }
+
+        let t = min(in.border_thickness, min(half_px.x, half_px.y));
+        let border_mix = smoothstep(-t - ui_aa, -t + ui_aa, dist);
+
+        let final_color = mix(in.fill_color, in.border_color, border_mix);
+        return vec4<f32>(final_color.rgb, final_color.a * alpha);
+    }
 
     if (in.shape_type == 2u) {
         let cell_size = in.extra_param;
@@ -78,28 +121,43 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     if (in.shape_type == 1u) {
-        let dist_box = max(abs(in.uv.x), abs(in.uv.y));
-        let alpha = 1.0 - smoothstep(1.0 - delta, 1.0 + delta, dist_box);
+        let half = in.size * 0.5;
+        let p_w = in.uv * half;
+        let dist_box = max(abs(p_w.x) - half.x, abs(p_w.y) - half.y);
+
+        let delta_w = max(uv_fwidth.x * half.x, uv_fwidth.y * half.y);
+        let border_w = min(in.border_thickness, min(half.x, half.y));
+
+        let alpha = 1.0 - smoothstep(-delta_w, delta_w, dist_box);
         if (alpha < 0.001) {
             discard;
         }
 
-        let border_mix = smoothstep(1.0 - border_uv_width - delta, 1.0 - border_uv_width + delta, dist_box);
+        let border_mix = smoothstep(-border_w - delta_w, -border_w + delta_w, dist_box);
 
         let final_color = mix(in.fill_color, in.border_color, border_mix);
         return vec4<f32>(final_color.rgb, final_color.a * alpha);
     }
 
     if (in.shape_type == 4u) {
-        let radius = in.extra_param;
-        let q = abs(in.uv) - 1.0 + radius;
-        let dist_rounded = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - radius;
+        let half = in.size * 0.5;
+        let p_w = in.uv * half;
+        let r = min(in.extra_param, 1.0) * min(half.x, half.y);
+        let q = abs(p_w) - (half - vec2<f32>(r, r));
+        let dist_rounded = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
 
-        let alpha = 1.0 - smoothstep(0.0 - delta, 0.0 + delta, dist_rounded);
+        let delta_w = max(uv_fwidth.x * half.x, uv_fwidth.y * half.y);
+
+        let alpha = 1.0 - smoothstep(-delta_w, delta_w, dist_rounded);
         if (alpha < 0.001) {
             discard;
         }
-        return vec4<f32>(in.fill_color.rgb, in.fill_color.a * alpha);
+
+        let border_w = min(in.border_thickness, min(half.x, half.y));
+        let border_mix = smoothstep(-border_w - delta_w, -border_w + delta_w, dist_rounded);
+
+        let final_color = mix(in.fill_color, in.border_color, border_mix);
+        return vec4<f32>(final_color.rgb, final_color.a * alpha);
     }
 
     if (in.shape_type == 3u && in.sides >= 3u) {
