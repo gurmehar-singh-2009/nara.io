@@ -1,126 +1,93 @@
-//!   let mut defs = default_classes();
-//!   defs.push(TankClassDef::with_barrels(
-//!       "Octo Tank".into(),
-//!       DARK_THEME.team_blue,
-//!       vec![
-//!           BarrelIcon::new(0.0, 0.0, 26.0, 9.0),
-//!           BarrelIcon::new(90.0, 0.0, 26.0, 9.0),
-//!           BarrelIcon::new(180.0, 0.0, 26.0, 9.0),
-//!           BarrelIcon::new(270.0, 0.0, 26.0, 9.0),
-//!       ],
-//!   ));
-//!   TankUpgradePanel::new(fs, defs)
-//!
-//! Barrel angles are axis-aligned (0 = up, 90 = right, 180 = down,
-//! 270 = left) because screen-space rects can't rotate; `lateral`
-//! offsets a barrel sideways for parallel barrels (Twin).
+use std::cell::RefCell;
 
 use glam::Vec2;
 use glyphon::{Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds, cosmic_text::Weight};
+use shared::packets::{TankOption, client_bound::BarrelDef};
 
 use crate::render::{
     buffers::EntityInstance,
     colours::{DARK_THEME, to_glyphon},
-    scoreboard::{rounded_ui_instance, ui_instance},
+    scoreboard::rounded_ui_instance,
 };
 
-const TILE_W: f32 = 120.0;
-const TILE_H: f32 = 120.0;
+const TILE_W: f32 = 140.0;
+const TILE_H: f32 = 140.0;
 const TILE_RADIUS: f32 = 12.0;
 const TILE_BORDER: f32 = 4.0;
 const GAP: f32 = 14.0;
-const COLS: usize = 3;
+const MIN_COLS: usize = 3;
+const MAX_COLS: usize = 5;
 const OPEN_TOP: f32 = 14.0;
 const SLIDE_SPEED: f32 = 12.0;
 const CLICKABLE_OPEN: f32 = 0.9;
 
-const ICON_CY: f32 = 46.0;
-const BODY_R: f32 = 21.0;
-const BODY_BORDER: f32 = 5.0;
-const BARREL_BORDER: f32 = 3.0;
-const BARREL_RADIUS: f32 = 3.0;
+const ICON_CY: f32 = 68.0;
 
-const NAME_FONT: f32 = 16.0;
-const NAME_LINE: f32 = 20.0;
+const TANK_BODY_SIZE: f32 = 42.0; // `let size = 42.0 * self.scale`
+const TANK_BORDER: f32 = 3.0; // `border_thickness: 3.0 * self.scale`
+
+const ICON_BODY_PX: f32 = 54.0;
+
+const SPIN_SPEED: f32 = 1.2;
+
+const NAME_FONT: f32 = 20.0;
+const NAME_LINE: f32 = 24.0;
 const NAME_BOTTOM: f32 = 10.0;
 const TEXT_OUTLINE_PX: f32 = 1.5;
 
-#[derive(Clone)]
-pub struct BarrelIcon {
-    pub angle_deg: f32,
-    pub lateral: f32,
-    pub length: f32,
-    pub width: f32,
+thread_local! {
+    static TANK_OPTIONS: RefCell<(u32, Vec<TankOption>)> = RefCell::new((0, Vec::new()));
 }
 
-impl BarrelIcon {
-    pub fn new(angle_deg: f32, lateral: f32, length: f32, width: f32) -> Self {
-        Self {
-            angle_deg,
-            lateral,
-            length,
-            width,
-        }
-    }
+pub fn push_tank_options(options: Vec<TankOption>) {
+    TANK_OPTIONS.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        cell.0 = cell.0.wrapping_add(1);
+        cell.1 = options;
+    });
+}
+
+pub fn current_options() -> Vec<TankOption> {
+    TANK_OPTIONS.with(|cell| cell.borrow().1.clone())
+}
+
+fn options_snapshot() -> (u32, Vec<TankOption>) {
+    TANK_OPTIONS.with(|cell| {
+        let cell = cell.borrow();
+        (cell.0, cell.1.clone())
+    })
 }
 
 #[derive(Clone)]
 pub struct TankClassDef {
     pub name: String,
     pub color: [f32; 4],
-    pub barrels: Vec<BarrelIcon>,
+    pub sides: u32,
+    pub barrels: Vec<BarrelDef>,
 }
 
 impl TankClassDef {
-    pub fn new(name: impl Into<String>, color: [f32; 4]) -> Self {
-        Self::with_barrels(name, color, vec![BarrelIcon::new(0.0, 0.0, 26.0, 9.0)])
-    }
-
-    pub fn with_barrels(
-        name: impl Into<String>,
-        color: [f32; 4],
-        barrels: Vec<BarrelIcon>,
-    ) -> Self {
+    fn from_option(option: &TankOption) -> Self {
         Self {
-            name: name.into(),
-            color,
-            barrels,
+            name: option.name.clone(),
+            color: tier_color(option.tier),
+            sides: option.sides,
+            barrels: option.barrels.clone(),
         }
     }
 }
 
 pub fn default_classes() -> Vec<TankClassDef> {
-    let t = &DARK_THEME;
-    vec![
-        TankClassDef::with_barrels(
-            "Twin",
-            t.team_blue,
-            vec![
-                BarrelIcon::new(0.0, -9.0, 27.0, 10.0),
-                BarrelIcon::new(0.0, 9.0, 27.0, 10.0),
-            ],
-        ),
-        TankClassDef::with_barrels(
-            "Sniper",
-            t.health_bar_foreground,
-            vec![BarrelIcon::new(0.0, 0.0, 34.0, 8.0)],
-        ),
-        TankClassDef::with_barrels(
-            "Machine Gun",
-            t.xp_bar_fill,
-            vec![BarrelIcon::new(0.0, 0.0, 23.0, 15.0)],
-        ),
-        TankClassDef::with_barrels(
-            "Flank Guard",
-            t.team_red,
-            vec![
-                BarrelIcon::new(0.0, 0.0, 25.0, 10.0),
-                BarrelIcon::new(180.0, 0.0, 25.0, 10.0),
-            ],
-        ),
-        TankClassDef::with_barrels("Smasher", t.team_purple, vec![]),
-        TankClassDef::new("Auto Tank", t.pentagon),
-    ]
+    Vec::new()
+}
+
+fn tier_color(tier: u32) -> [f32; 4] {
+    match tier % 4 {
+        0 => DARK_THEME.team_blue,
+        1 => DARK_THEME.team_red,
+        2 => DARK_THEME.team_purple,
+        _ => DARK_THEME.pentagon,
+    }
 }
 
 fn bold() -> Attrs<'static> {
@@ -150,23 +117,107 @@ fn window_to_screen_scale(window: Vec2, screen: Vec2) -> f32 {
     }
 }
 
+fn screen_to_world(center: Vec2, screen: Vec2, camera_pos: [f32; 2], zoom: f32) -> ([f32; 2], f32) {
+    let aspect = if screen.y > 0.0 {
+        screen.x / screen.y
+    } else {
+        1.0
+    };
+    let half_w = (screen.x * 0.5).max(1.0);
+    let half_h = (screen.y * 0.5).max(1.0);
+
+    let ndc_x = center.x / half_w - 1.0;
+    let ndc_y = 1.0 - center.y / half_h;
+    let position = [
+        camera_pos[0] + ndc_x * aspect / zoom,
+        camera_pos[1] + ndc_y / zoom,
+    ];
+
+    let px_per_world = (zoom * screen.y * 0.5).max(1e-4);
+    (position, px_per_world)
+}
+
+fn push_tank_icon(
+    instances: &mut Vec<EntityInstance>,
+    def: &TankClassDef,
+    world_pos: [f32; 2],
+    spin: f32,
+    scale: f32,
+) {
+    for barrel in def.barrels.iter() {
+        let barrel_angle = barrel.angle.to_radians();
+        let world_angle = spin + barrel_angle;
+
+        let base_local = Vec2::new(barrel.x, barrel.y) * scale;
+        let base_pos =
+            Vec2::new(world_pos[0], world_pos[1]) + Vec2::from_angle(spin).rotate(base_local);
+        let center_offset = Vec2::from_angle(world_angle) * (barrel.length * scale * 0.5);
+        let barrel_pos = base_pos + center_offset;
+
+        instances.push(EntityInstance {
+            position: [barrel_pos.x, barrel_pos.y],
+            size: [barrel.length * scale, barrel.width * scale],
+            rotation: world_angle,
+            shape_type: 1,
+            sides: 4,
+            fill_color: DARK_THEME.barrel,
+            border_color: DARK_THEME.barrel_outline,
+            border_thickness: TANK_BORDER * scale,
+            extra_param: 1.0,
+        });
+    }
+
+    let size = TANK_BODY_SIZE * scale;
+    let shape_type = if def.sides >= 3 { 3 } else { 0 };
+
+    instances.push(EntityInstance {
+        position: world_pos,
+        size: [size, size],
+        rotation: spin,
+        shape_type,
+        sides: def.sides,
+        fill_color: def.color,
+        border_color: darken(def.color, 0.35),
+        border_thickness: TANK_BORDER * scale,
+        extra_param: 1.0,
+    });
+}
+
 pub struct TankUpgradePanel {
     defs: Vec<TankClassDef>,
     labels: Vec<Buffer>,
-    /// 0 = closed (above the screen), 1 = fully open
     open: f32,
     pinned: bool,
+    spin: f32,
+    defs_gen: u32,
 }
 
 impl TankUpgradePanel {
     pub fn new(fs: &mut glyphon::FontSystem, defs: Vec<TankClassDef>) -> Self {
-        let labels = defs.iter().map(|d| make_buffer(fs, &d.name)).collect();
-        Self {
-            defs,
-            labels,
+        let mut panel = Self {
+            defs: Vec::new(),
+            labels: Vec::new(),
             open: 0.0,
             pinned: false,
+            spin: 0.0,
+            defs_gen: 0,
+        };
+
+        panel.set_defs(fs, defs);
+
+        let (genr, options) = options_snapshot();
+        if genr != 0 {
+            let defs = options.iter().map(TankClassDef::from_option).collect();
+            panel.set_defs(fs, defs);
+            panel.defs_gen = genr;
         }
+
+        panel
+    }
+
+    fn set_defs(&mut self, fs: &mut glyphon::FontSystem, defs: Vec<TankClassDef>) {
+        self.labels = defs.iter().map(|d| make_buffer(fs, &d.name)).collect();
+        self.defs = defs;
     }
 
     pub fn toggle(&mut self) {
@@ -181,12 +232,22 @@ impl TankUpgradePanel {
         self.pinned = pinned;
     }
 
+    fn cols(&self) -> usize {
+        let n = self.defs.len();
+        if n <= MIN_COLS {
+            return MIN_COLS;
+        }
+        ((n as f32).sqrt().ceil() as usize).clamp(MIN_COLS, MAX_COLS)
+    }
+
     fn rows(&self) -> usize {
-        (self.defs.len() + COLS - 1) / COLS
+        let cols = self.cols();
+        (self.defs.len() + cols - 1) / cols
     }
 
     fn total_w(&self) -> f32 {
-        COLS as f32 * TILE_W + (COLS as f32 - 1.0) * GAP
+        let cols = self.cols() as f32;
+        cols * TILE_W + (cols - 1.0) * GAP
     }
 
     fn total_h(&self) -> f32 {
@@ -206,21 +267,30 @@ impl TankUpgradePanel {
             .iter()
             .enumerate()
             .map(|(i, _)| {
-                let col = (i % COLS) as f32;
-                let row = (i / COLS) as f32;
+                let col = (i % self.cols()) as f32;
+                let row = (i / self.cols()) as f32;
                 let min = Vec2::new(left + col * (TILE_W + GAP), top + row * (TILE_H + GAP));
                 (min, min + Vec2::new(TILE_W, TILE_H))
             })
             .collect()
     }
 
-    pub fn tick(&mut self, dt: f32, available: bool) {
+    pub fn tick(&mut self, fs: &mut glyphon::FontSystem, dt: f32, available: bool) {
+        let (genr, options) = options_snapshot();
+        if genr != self.defs_gen {
+            self.defs_gen = genr;
+            let defs: Vec<TankClassDef> = options.iter().map(TankClassDef::from_option).collect();
+            self.set_defs(fs, defs);
+        }
+
         let target = if self.pinned || available { 1.0 } else { 0.0 };
         let t = 1.0 - (-SLIDE_SPEED * dt).exp();
         self.open += (target - self.open) * t;
         if (self.open - target).abs() < 0.002 {
             self.open = target;
         }
+
+        self.spin += dt * SPIN_SPEED;
     }
 
     pub fn hit_test(&self, cursor: Vec2, window: Vec2, screen: Vec2) -> Option<usize> {
@@ -237,13 +307,21 @@ impl TankUpgradePanel {
         None
     }
 
-    pub fn render_data(&self, screen: Vec2) -> (Vec<EntityInstance>, Vec<TextArea<'_>>) {
+    pub fn render_data(
+        &self,
+        screen: Vec2,
+        camera_pos: [f32; 2],
+        zoom: f32,
+    ) -> (Vec<EntityInstance>, Vec<TextArea<'_>>) {
         let mut instances = Vec::new();
         let mut areas = Vec::new();
 
         if self.open <= 0.01 {
             return (instances, areas);
         }
+
+        let px_per_world = (zoom * screen.y * 0.5).max(1e-4);
+        let scale = ICON_BODY_PX / (TANK_BODY_SIZE * px_per_world);
 
         let rects = self.tile_rects(screen);
 
@@ -263,37 +341,8 @@ impl TankUpgradePanel {
                 TILE_RADIUS,
             ));
 
-            for barrel in def.barrels.iter() {
-                let a = barrel.angle_deg.to_radians();
-                let dir = Vec2::new(a.sin(), -a.cos());
-                let perp = Vec2::new(a.cos(), a.sin());
-                let center = icon_c + dir * (barrel.length * 0.5) + perp * barrel.lateral;
-                let vertical = barrel.angle_deg.rem_euclid(180.0) == 0.0;
-                let size = if vertical {
-                    Vec2::new(barrel.width, barrel.length)
-                } else {
-                    Vec2::new(barrel.length, barrel.width)
-                };
-                instances.push(rounded_ui_instance(
-                    center,
-                    size,
-                    screen,
-                    DARK_THEME.barrel,
-                    DARK_THEME.barrel_outline,
-                    BARREL_BORDER,
-                    BARREL_RADIUS,
-                ));
-            }
-
-            instances.push(ui_instance(
-                icon_c,
-                Vec2::new(BODY_R * 2.0, BODY_R * 2.0),
-                screen,
-                6,
-                def.color,
-                darken(def.color, 0.45),
-                BODY_BORDER,
-            ));
+            let (world_pos, _) = screen_to_world(icon_c, screen, camera_pos, zoom);
+            push_tank_icon(&mut instances, def, world_pos, self.spin, scale);
 
             let name_w = measure(&self.labels[i]);
             push_outlined(

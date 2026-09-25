@@ -17,7 +17,6 @@ pub struct Tanks {
     aim: Vec<f32>,
     movement_dirs: Vec<Option<f32>>,
     auto_fire: Vec<bool>,
-    reload_timers: Vec<f32>,
     levels: Vec<u32>,
     tank_types: Vec<Arc<Tank>>,
     max_healths: Vec<u32>,
@@ -25,6 +24,8 @@ pub struct Tanks {
     bullet_speeds: Vec<f32>,
     reload_times: Vec<f32>,
     barrels: Vec<Vec<BarrelDef>>,
+    barrel_timers: Vec<Vec<f32>>,
+    upgrade_offered: Vec<Option<u32>>,
     sparse: Vec<Option<usize>>,
 }
 
@@ -34,7 +35,6 @@ pub struct TankRef<'a> {
     pub aim: &'a f32,
     pub move_dir: &'a Option<f32>,
     pub auto_fire: &'a bool,
-    pub reload_timer: &'a f32,
     pub level: &'a u32,
     pub tank_type: &'a Tank,
     pub max_health: &'a u32,
@@ -50,7 +50,7 @@ pub struct TankMut<'a> {
     pub aim: &'a mut f32,
     pub move_dir: &'a mut Option<f32>,
     pub auto_fire: &'a mut bool,
-    pub reload_timer: &'a mut f32,
+    // pub reload_timer: &'a mut f32,
     pub level: &'a mut u32,
     // we dont need tank type as mutable EVER
     pub tank_type: &'a Tank,
@@ -59,6 +59,14 @@ pub struct TankMut<'a> {
     pub bullet_speed: &'a mut f32,
     pub reload_time: &'a mut f32,
     pub barrels: &'a mut Vec<BarrelDef>,
+    pub barrel_timers: &'a mut Vec<f32>,
+}
+
+fn initial_timers(reload_time: f32, def: &Tank) -> Vec<f32> {
+    def.barrels
+        .iter()
+        .map(|b| ((reload_time * b.reload).max(0.05) * b.delay).max(0.0))
+        .collect()
 }
 
 impl Tanks {
@@ -70,7 +78,6 @@ impl Tanks {
             aim: Vec::with_capacity(max_tanks),
             movement_dirs: Vec::with_capacity(max_tanks),
             auto_fire: Vec::with_capacity(max_tanks),
-            reload_timers: Vec::with_capacity(max_tanks),
             levels: Vec::with_capacity(max_tanks),
             tank_types: Vec::with_capacity(max_tanks),
             max_healths: Vec::with_capacity(max_tanks),
@@ -78,6 +85,8 @@ impl Tanks {
             bullet_speeds: Vec::with_capacity(max_tanks),
             reload_times: Vec::with_capacity(max_tanks),
             barrels: Vec::with_capacity(max_tanks),
+            barrel_timers: Vec::with_capacity(max_tanks),
+            upgrade_offered: Vec::with_capacity(max_tanks),
             sparse: Vec::with_capacity(max_tanks),
         }
     }
@@ -97,6 +106,8 @@ impl Tanks {
 
         let slot = self.ids.len();
         let basic_tank = tank_tree[0][0].clone();
+        let basic_barrels = barrel_defs(&basic_tank);
+        let timers = initial_timers(0.5, &basic_tank);
 
         self.ids.push(id);
         self.names.push(name);
@@ -104,20 +115,15 @@ impl Tanks {
         self.aim.push(0.0);
         self.movement_dirs.push(None);
         self.auto_fire.push(false);
-        self.reload_timers.push(0.0);
         self.levels.push(1);
         self.max_healths.push(basic_tank.max_health);
         self.bullet_damages.push(2);
         self.bullet_speeds.push(100.0);
         self.reload_times.push(0.5);
         self.tank_types.push(Arc::new(basic_tank));
-        self.barrels.push(vec![BarrelDef {
-            x: 0.0,
-            y: 0.0,
-            angle: 0.0,
-            width: 18.0,
-            length: 40.0,
-        }]);
+        self.barrels.push(basic_barrels);
+        self.barrel_timers.push(timers);
+        self.upgrade_offered.push(None);
 
         self.sparse[id.index] = Some(slot);
     }
@@ -139,7 +145,6 @@ impl Tanks {
         self.aim.swap(slot, last);
         self.movement_dirs.swap(slot, last);
         self.auto_fire.swap(slot, last);
-        self.reload_timers.swap(slot, last);
         self.levels.swap(slot, last);
         self.tank_types.swap(slot, last);
         self.max_healths.swap(slot, last);
@@ -147,6 +152,8 @@ impl Tanks {
         self.bullet_speeds.swap(slot, last);
         self.reload_times.swap(slot, last);
         self.barrels.swap(slot, last);
+        self.barrel_timers.swap(slot, last);
+        self.upgrade_offered.swap(slot, last);
 
         self.ids.pop();
         self.names.pop();
@@ -154,7 +161,6 @@ impl Tanks {
         self.aim.pop();
         self.movement_dirs.pop();
         self.auto_fire.pop();
-        self.reload_timers.pop();
         self.levels.pop();
         self.tank_types.pop();
         self.max_healths.pop();
@@ -162,6 +168,8 @@ impl Tanks {
         self.bullet_speeds.pop();
         self.reload_times.pop();
         self.barrels.pop();
+        self.barrel_timers.pop();
+        self.upgrade_offered.pop();
 
         self.sparse[id.index] = None;
 
@@ -186,7 +194,7 @@ impl Tanks {
             aim: &self.aim[slot],
             move_dir: &self.movement_dirs[slot],
             auto_fire: &self.auto_fire[slot],
-            reload_timer: &self.reload_timers[slot],
+            // reload_timer: &self.reload_timers[slot],
             level: &self.levels[slot],
             tank_type: &self.tank_types[slot],
             max_health: &self.max_healths[slot],
@@ -210,7 +218,7 @@ impl Tanks {
             aim: &mut self.aim[slot],
             move_dir: &mut self.movement_dirs[slot],
             auto_fire: &mut self.auto_fire[slot],
-            reload_timer: &mut self.reload_timers[slot],
+            // reload_timer: &mut self.reload_timers[slot],
             level: &mut self.levels[slot],
             tank_type: &self.tank_types[slot],
             max_health: &mut self.max_healths[slot],
@@ -218,6 +226,7 @@ impl Tanks {
             bullet_speed: &mut self.bullet_speeds[slot],
             reload_time: &mut self.reload_times[slot],
             barrels: &mut self.barrels[slot],
+            barrel_timers: &mut self.barrel_timers[slot],
         })
     }
 
@@ -249,6 +258,56 @@ impl Tanks {
         true
     }
 
+    pub fn offered_for(&self, id: EntityId) -> Option<u32> {
+        let Some(slot) = self.sparse.get(id.index).copied().flatten() else {
+            return None;
+        };
+
+        if self.ids.get(slot).copied() != Some(id) {
+            return None;
+        }
+
+        self.upgrade_offered[slot]
+    }
+
+    pub fn set_offered(&mut self, id: EntityId, tank_id: u32) -> bool {
+        let Some(slot) = self.sparse.get(id.index).copied().flatten() else {
+            return false;
+        };
+
+        if self.ids.get(slot).copied() != Some(id) {
+            return false;
+        }
+
+        self.upgrade_offered[slot] = Some(tank_id);
+
+        true
+    }
+
+    pub fn reset_offers(&mut self) {
+        for offered in self.upgrade_offered.iter_mut() {
+            *offered = None;
+        }
+    }
+
+    pub fn apply_def(&mut self, id: EntityId, def: &Tank) -> bool {
+        let Some(slot) = self.sparse.get(id.index).copied().flatten() else {
+            return false;
+        };
+
+        if self.ids.get(slot).copied() != Some(id) {
+            return false;
+        }
+
+        self.tank_types[slot] = Arc::new(def.clone());
+        self.max_healths[slot] = def.max_health;
+        self.barrels[slot] = barrel_defs(def);
+        self.barrel_timers[slot] = initial_timers(self.reload_times[slot], def);
+        self.upgrade_offered[slot] = None;
+
+        true
+    }
+
     pub fn len(&self) -> usize {
         self.ids.len()
     }
@@ -256,4 +315,17 @@ impl Tanks {
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
     }
+}
+
+pub fn barrel_defs(def: &Tank) -> Vec<BarrelDef> {
+    def.barrels
+        .iter()
+        .map(|b| BarrelDef {
+            x: b.x,
+            y: b.y,
+            angle: b.angle,
+            width: b.width,
+            length: b.length,
+        })
+        .collect()
 }

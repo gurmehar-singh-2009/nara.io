@@ -4,6 +4,7 @@
 //   player AND bullet AND shapes) for both add, remove, update
 
 mod add_entity;
+mod init;
 mod leaderboard;
 mod player_stats;
 mod remove_entity;
@@ -12,6 +13,7 @@ mod update_component;
 mod update_entity;
 
 pub use add_entity::AddEntityPacket;
+pub use init::InitPacket;
 pub use leaderboard::LeaderboardPacket;
 pub use player_stats::PlayerStatsPacket;
 pub use remove_entity::RemoveEntityPacket;

@@ -3,14 +3,11 @@ use bytes::{BufMut, Bytes, BytesMut};
 use snafu::ResultExt;
 
 use crate::{
-    errors::{DecodeSnafu, InvalidByteSizeSnafu, SharedError},
-    packets::{
+    errors::{DecodeSnafu, InvalidByteSizeSnafu, SharedError}, packets::{
         client_bound::{
-            AddEntityPacket, LeaderboardPacket, PlayerStatsPacket, RemoveEntityPacket,
+            AddEntityPacket, BarrelDef, LeaderboardPacket, PlayerStatsPacket, RemoveEntityPacket,
             UpdateEntityPacket,
-        },
-        handshake::HandshakePacket,
-        server_bound::{AimPacket, AutoFirePacket, MovementPacket, SpawnReqPacket},
+        }, handshake::HandshakePacket, server_bound::{AimPacket, AutoFirePacket, ChatMessagePacket, ChatSendPacket, MovementPacket, SpawnReqPacket},
     },
 };
 
@@ -19,6 +16,10 @@ pub mod handshake;
 pub mod server_bound;
 
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/packet_seed.rs"));
+
+pub fn level_scale(level: u32) -> f32 {
+    1.01f32.powi(level.saturating_sub(1) as i32)
+}
 
 const fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
@@ -157,6 +158,27 @@ pub trait Packet: Send + Sync + Sized + Encode + for<'de> Decode<'de> {
     }
 }
 
+junk_packet! {
+    pub struct TankTreePacket {
+        pub tanks: Vec<TankOption>,
+    }
+}
+
+junk_packet! {
+    pub struct TankSelectPacket {
+        pub tank_id: u32,
+    }
+}
+
+#[derive(Debug, Encode, Decode, Clone)]
+pub struct TankOption {
+    pub id: u32,
+    pub name: String,
+    pub tier: u32,
+    pub sides: u32,
+    pub barrels: Vec<BarrelDef>,
+}
+
 register_packets! {
     (0, HandshakePacket),
     (1, SpawnReqPacket),
@@ -168,4 +190,8 @@ register_packets! {
     (7, PlayerStatsPacket),
     (8, RemoveEntityPacket),
     (9, LeaderboardPacket),
+    (10, TankTreePacket),
+    (11, TankSelectPacket),
+    (12, ChatSendPacket),
+    (13, ChatMessagePacket),
 }

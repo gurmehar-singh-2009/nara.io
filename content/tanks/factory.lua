@@ -1,0 +1,61 @@
+-- Factory (converted from tank_defs.json)
+-- units are game units (tank body = 42), angles are degrees.
+return {
+    id = 52,
+    name = "Factory",
+    upgradeMessage = "",
+    levelRequirement = 45,
+    upgrades = {},
+    speed = 1,
+    maxHealth = 50,
+    sides = 4,
+    fieldFactor = 0.899,
+    absorbtionFactor = 1,
+    preAddon = 0,
+    postAddon = 0,
+    flags = {
+        invisibility = false,
+        zoomAbility = false,
+        canShoot = true,
+        devOnly = false,
+    },
+    stats = {
+        { name = "Movement Speed", max = 7 },
+        { name = "Reload", max = 7 },
+        { name = "Drone Damage", max = 7 },
+        { name = "Drone Health", max = 7 },
+        { name = "Drone Speed", max = 7 },
+        { name = "Body Damage", max = 7 },
+        { name = "Max Health", max = 7 },
+        { name = "Health Regen", max = 7 },
+    },
+    barrels = {
+        {
+            x = 0,
+            y = 0,
+            angle = 0,
+            width = 17.64,
+            length = 29.4,
+            delay = 0,
+            reload = 3,
+            recoil = 1,
+            isTrapezoid = true,
+            trapezoidDirection = 0,
+            addon = 0,
+            droneCount = 6,
+            bullet = {
+                type = "drone",
+                health = 4,
+                damage = 0.699,
+                speed = 0.56,
+                scatterRate = 1,
+                lifeLength = 1,
+                absorbtionFactor = 1,
+                sizeRatio = 1,
+            },
+        },
+    },
+    onShoot = function(player)
+        -- TODO
+    end,
+}

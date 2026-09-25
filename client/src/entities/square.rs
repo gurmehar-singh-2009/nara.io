@@ -67,6 +67,8 @@ impl Shape {
 
 impl Entity for Shape {
     fn get_render_instances(&self) -> Vec<EntityInstance> {
+        let border = DARK_THEME.outline_for(self.fill_color);
+
         vec![EntityInstance {
             position: [self.render_pos.x, self.render_pos.y],
             size: [self.size, self.size],
@@ -74,7 +76,7 @@ impl Entity for Shape {
             shape_type: 3,
             sides: self.sides,
             fill_color: with_alpha(self.fill_color, self.render_alpha),
-            border_color: with_alpha(DARK_THEME.border, self.render_alpha),
+            border_color: with_alpha(border, self.render_alpha),
             border_thickness: 3.0,
             extra_param: 1.,
         }]

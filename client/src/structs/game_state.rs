@@ -6,6 +6,15 @@ pub enum ChatChannel {
     Team,
 }
 
+#[derive(Clone)]
+pub struct IncomingChat {
+    pub channel: ChatChannel,
+    pub team: u8,
+    pub sender: String,
+    pub text: String,
+    pub timestamp: u64,
+}
+
 pub struct GameState {
     pub my_player_id: Option<u32>,
     pub players: Vec<Tank>,
@@ -34,7 +43,7 @@ pub struct GameState {
 
     pub chat_message: Option<String>,
     pub chat_channel: ChatChannel,
-    pub incoming_chat: Vec<(ChatChannel, String)>,
+    pub incoming_chat: Vec<IncomingChat>,
 
     pub class_upgrades_available: bool,
     pub class_choice: Option<u8>,

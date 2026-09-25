@@ -16,6 +16,7 @@ pub struct UpdateEntityPacketData {
     pub y: f32,
     pub rot: f32,
     pub scale: f32,
+    pub kind: u32,
     pub health: u32,
     pub max_health: u32,
 }

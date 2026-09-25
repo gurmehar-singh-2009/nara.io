@@ -49,13 +49,13 @@ pub async fn start() {
 
         level: 1,
         xp: 0,
-        xp_to_next: 250,
+        xp_to_next: 5,
         health: 100,
         max_health: 100,
 
         leaderboard: vec![],
         upgrade_request: None,
-        upgrade_levels: [0u8; 8],
+        upgrade_levels: [0, 1, 2, 3, 4, 5, 6, 7],
 
         chat_message: None,
         chat_channel: structs::game_state::ChatChannel::Global,

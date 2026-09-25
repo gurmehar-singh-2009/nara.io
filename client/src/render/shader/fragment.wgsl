@@ -85,7 +85,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         let t = min(in.border_thickness, min(half_px.x, half_px.y));
-        let border_mix = smoothstep(-t - ui_aa, -t + ui_aa, dist);
+        let border_aa = max(min(ui_aa, t) * 0.5, 1e-5);
+        let border_mix = smoothstep(-t - border_aa, -t + border_aa, dist);
 
         let final_color = mix(in.fill_color, in.border_color, border_mix);
         return vec4<f32>(final_color.rgb, final_color.a * alpha);
@@ -114,7 +115,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
 
-        let border_mix = smoothstep(1.0 - border_uv_width - delta, 1.0 - border_uv_width + delta, dist_circle);
+        // crisp
+        let border_aa = max(min(delta, border_uv_width) * 0.5, 1e-5);
+        let border_mix = smoothstep(1.0 - border_uv_width - border_aa, 1.0 - border_uv_width + border_aa, dist_circle);
 
         let final_color = mix(in.fill_color, in.border_color, border_mix);
         return vec4<f32>(final_color.rgb, final_color.a * alpha);
@@ -133,7 +136,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
 
-        let border_mix = smoothstep(-border_w - delta_w, -border_w + delta_w, dist_box);
+        // crisp
+        let border_aa = max(min(delta_w, border_w) * 0.5, 1e-5);
+        let border_mix = smoothstep(-border_w - border_aa, -border_w + border_aa, dist_box);
 
         let final_color = mix(in.fill_color, in.border_color, border_mix);
         return vec4<f32>(final_color.rgb, final_color.a * alpha);
@@ -154,9 +159,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         let border_w = min(in.border_thickness, min(half.x, half.y));
-        let border_mix = smoothstep(-border_w - delta_w, -border_w + delta_w, dist_rounded);
+        // crisp
+        let border_aa = max(min(delta_w, border_w) * 0.5, 1e-5);
+        // let border_mix = smoothstep(-border_w - border_aa, -border_w + border_aa, dist_rounded);
 
-        let final_color = mix(in.fill_color, in.border_color, border_mix);
+        let final_color = mix(in.fill_color, in.border_color, in.border_color);
         return vec4<f32>(final_color.rgb, final_color.a * alpha);
     }
 
@@ -173,7 +180,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
 
-        let border_mix = smoothstep(1.0 - border_uv_width - delta, 1.0 - border_uv_width + delta, dist_poly);
+        // crisp
+        let border_aa = max(min(delta, border_uv_width) * 0.5, 1e-5);
+        let border_mix = smoothstep(1.0 - border_uv_width - border_aa, 1.0 - border_uv_width + border_aa, dist_poly);
 
         let final_color = mix(in.fill_color, in.border_color, border_mix);
         return vec4<f32>(final_color.rgb, final_color.a * alpha);

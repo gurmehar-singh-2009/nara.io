@@ -9,13 +9,13 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::window;
 use wgpu::{
-    Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
+    Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, ColorTargetState,
     ColorWrites, CurrentSurfaceTexture, Device, DeviceDescriptor, ExperimentalFeatures, Features,
-    FragmentState, Instance, InstanceDescriptor, Limits, MultisampleState,
-    PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, Queue, RenderPipeline,
-    RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor, ShaderStages, Surface,
-    SurfaceConfiguration, VertexState, util::DeviceExt,
+    FragmentState, Instance, InstanceDescriptor, MultisampleState, PipelineCompilationOptions,
+    PipelineLayoutDescriptor, PrimitiveState, Queue, RenderPipeline, RenderPipelineDescriptor,
+    RequestAdapterOptions, ShaderModuleDescriptor, ShaderStages, Surface, SurfaceConfiguration,
+    VertexState, util::DeviceExt,
 };
 use winit::{
     application::ApplicationHandler,
@@ -107,18 +107,42 @@ pub struct RenderState {
 }
 
 impl RenderState {
-    pub async fn new(window: Arc<Window>, game: Rc<RefCell<GameState>>) -> Self {
-        let size = window.inner_size();
+    async fn create_surface_and_adapter(window: Arc<Window>) -> (Surface<'static>, Adapter) {
+        // let webgpu = Instance::new(InstanceDescriptor {
+        //     backends: Backends::BROWSER_WEBGPU,
+        //     flags: Default::default(),
+        //     memory_budget_thresholds: Default::default(),
+        //     backend_options: Default::default(),
+        //     display: None,
+        // });
+
+        // if let Ok(adapter) = webgpu
+        //     .request_adapter(&RequestAdapterOptions {
+        //         power_preference: wgpu::PowerPreference::HighPerformance,
+        //         compatible_surface: None,
+        //         force_fallback_adapter: false,
+        //         apply_limit_buckets: true,
+        //     })
+        //     .await
+        // {
+        //     let surface = webgpu
+        //         .create_surface(window.clone())
+        //         .expect("failed to create WebGPU surface");
+        //     web_sys::console::log_1(&"wgpu backend: WebGPU".into());
+        //     return (surface, adapter);
+        // }
 
         let instance = Instance::new(InstanceDescriptor {
-            backends: Backends::BROWSER_WEBGPU,
+            backends: Backends::GL,
             flags: Default::default(),
             memory_budget_thresholds: Default::default(),
             backend_options: Default::default(),
             display: None,
         });
 
-        let surface = instance.create_surface(window.clone()).unwrap();
+        let surface = instance
+            .create_surface(window.clone())
+            .expect("failed to create WebGL2 surface");
 
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -128,28 +152,57 @@ impl RenderState {
                 apply_limit_buckets: true,
             })
             .await
-            .unwrap();
+            .expect("neither WebGPU nor WebGL2 is available");
+
+        web_sys::console::log_1(&"wgpu backend: WebGL2".into());
+        (surface, adapter)
+    }
+
+    fn pick_surface_format(formats: &[wgpu::TextureFormat]) -> wgpu::TextureFormat {
+        const PREFERRED: &[wgpu::TextureFormat] = &[
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Bgra8Unorm,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+        ];
+        PREFERRED
+            .iter()
+            .copied()
+            .find(|f| formats.contains(f))
+            .unwrap_or(formats[0])
+    }
+
+    pub async fn new(window: Arc<Window>, game: Rc<RefCell<GameState>>) -> Self {
+        let size = window.inner_size();
+
+        let (surface, adapter) = Self::create_surface_and_adapter(window.clone()).await;
 
         let (device, queue) = adapter
             .request_device(&DeviceDescriptor {
                 label: None,
                 required_features: Features::empty(),
                 experimental_features: ExperimentalFeatures::disabled(),
-                required_limits: Limits::defaults(),
+                required_limits: adapter.limits(),
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
             })
             .await
             .unwrap();
 
-        let scale_factor = window.scale_factor();
-        let inner_size = window.inner_size();
-
-        let physical_width = (inner_size.width as f64 * scale_factor) as u32;
-        let physical_height = (inner_size.height as f64 * scale_factor) as u32;
-
         let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps.formats[0];
+        let surface_format = Self::pick_surface_format(&surface_caps.formats);
+        let alpha_mode = if surface_caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::Opaque)
+        {
+            wgpu::CompositeAlphaMode::Opaque
+        } else {
+            surface_caps.alpha_modes[0]
+        };
+
+        let max_dim = device.limits().max_texture_dimension_2d;
+        let physical_width = size.width.clamp(1, max_dim);
+        let physical_height = size.height.clamp(1, max_dim);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -157,7 +210,7 @@ impl RenderState {
             width: physical_width,
             height: physical_height,
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: surface_caps.alpha_modes[0],
+            alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
             color_space: wgpu::SurfaceColorSpace::Auto,
@@ -353,32 +406,33 @@ impl RenderState {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        let scale_factor = self.window.scale_factor();
-
-        let physical_width = (width as f64 * scale_factor) as u32;
-        let physical_height = (height as f64 * scale_factor) as u32;
-
-        if physical_width > 0 && physical_height > 0 {
-            self.config.width = physical_width;
-            self.config.height = physical_height;
-            self.surface.configure(&self.device, &self.config);
-            self.is_surface_configured = true;
-
-            self.viewport.update(
-                &self.queue,
-                Resolution {
-                    width: physical_width,
-                    height: physical_height,
-                },
-            );
-
-            self.text_buffer
-                .set_size(Some(physical_width as f32), Some(physical_height as f32));
-            self.score_bar_buffer
-                .set_size(Some(physical_width as f32), Some(physical_height as f32));
-
-            self.update_camera([self.camera.pos.x, self.camera.pos.y], self.camera.zoom);
+        if width == 0 || height == 0 {
+            return;
         }
+
+        let max_dim = self.device.limits().max_texture_dimension_2d;
+        let width = width.min(max_dim);
+        let height = height.min(max_dim);
+
+        if self.is_surface_configured && self.config.width == width && self.config.height == height
+        {
+            return;
+        }
+
+        self.config.width = width;
+        self.config.height = height;
+        self.surface.configure(&self.device, &self.config);
+        self.is_surface_configured = true;
+
+        self.viewport
+            .update(&self.queue, Resolution { width, height });
+
+        self.text_buffer
+            .set_size(Some(width as f32), Some(height as f32));
+        self.score_bar_buffer
+            .set_size(Some(width as f32), Some(height as f32));
+
+        self.update_camera([self.camera.pos.x, self.camera.pos.y], self.camera.zoom);
     }
 
     pub fn update(&mut self, instances: &[EntityInstance]) {
@@ -456,7 +510,7 @@ impl RenderState {
             (Vec::new(), Vec::new())
         };
         let (panel_instances, panel_areas) = if mode == 0 {
-            self.upgrade_panel.render_data(screen, upgrade_levels)
+            self.upgrade_panel.render_data(screen, upgrade_levels, 67)
         } else {
             (Vec::new(), Vec::new())
         };
@@ -466,7 +520,7 @@ impl RenderState {
             (Vec::new(), Vec::new())
         };
         let (class_instances, class_areas) = if mode == 0 {
-            self.class_panel.render_data(screen)
+            self.class_panel.render_data(screen, camera_pos, zoom)
         } else {
             (Vec::new(), Vec::new())
         };
@@ -623,7 +677,7 @@ impl RenderState {
                 let bar_cy = screen_h - SCORE_BAR_BOTTOM;
                 let text_w = Renderer::text_width(&self.score_bar_buffer);
                 let left = bar_cx - text_w * 0.5;
-                let top = bar_cy - 15.0; // line height 30 on a 36px bar
+                let top = bar_cy - 15.0;
 
                 for (dx, dy) in OUTLINE_DIRS {
                     text_areas.push(TextArea {
@@ -866,12 +920,13 @@ impl Renderer {
         game.bullets
             .retain(|b| b.render_alpha > 0.0 && (now - b.last_update_time) < BULLET_STALE_CULL_MS);
 
-        const SHAPE_STALE_MS: f64 = 3000.0;
-        for s in game.shapes.iter_mut() {
-            if !s.dying && now - s.last_update_time > SHAPE_STALE_MS {
-                s.dying = true;
-            }
-        }
+        game.shapes.retain(|s| s.render_alpha > 0.0 || !s.dying);
+        // const SHAPE_STALE_MS: f64 = 3000.0;
+        // for s in game.shapes.iter_mut() {
+        //     if !s.dying && now - s.last_update_time > SHAPE_STALE_MS {
+        //         s.dying = true;
+        //     }
+        // }
 
         let my_player_id = game.my_player_id;
 
@@ -1008,8 +1063,15 @@ impl Renderer {
 
     fn update_chat(state: &mut RenderState, game: &mut GameState, now: f64, dt: f32) {
         let incoming = std::mem::take(&mut game.incoming_chat);
-        for (channel, msg) in incoming.iter() {
-            state.chat.receive(&mut state.font_system, *channel, msg);
+        for msg in incoming.iter() {
+            state.chat.receive(
+                &mut state.font_system,
+                msg.channel,
+                msg.team,
+                &msg.sender,
+                &msg.text,
+                msg.timestamp,
+            );
         }
         game.chat_channel = state.chat.active_channel();
         state.chat.tick(now, dt);
@@ -1023,13 +1085,28 @@ impl Renderer {
         aspect_ratio: f32,
     ) -> Vec<RenderEntity<'a>> {
         const MAP_BOUND: f32 = 2500.0;
-        let border_color = DARK_THEME.maze_walls;
+        const OUTSIDE_SIZE: f32 = 30000.0;
+        let outside = DARK_THEME.map_outside;
 
         let mut instances: Vec<RenderEntity<'a>> = vec![
             RenderEntity {
                 instance: EntityInstance {
                     position: [0.0, 0.0],
-                    size: [10000.0, 10000.0],
+                    size: [OUTSIDE_SIZE, OUTSIDE_SIZE],
+                    rotation: 0.0,
+                    shape_type: 1,
+                    sides: 4,
+                    fill_color: outside,
+                    border_color: outside,
+                    border_thickness: 0.0,
+                    extra_param: 1.0,
+                },
+                text: None,
+            },
+            RenderEntity {
+                instance: EntityInstance {
+                    position: [0.0, 0.0],
+                    size: [MAP_BOUND * 2.0, MAP_BOUND * 2.0],
                     rotation: 0.0,
                     shape_type: 2,
                     sides: 0,
@@ -1037,62 +1114,6 @@ impl Renderer {
                     border_color: DARK_THEME.grid,
                     border_thickness: 2.0,
                     extra_param: 64.0,
-                },
-                text: None,
-            },
-            RenderEntity {
-                instance: EntityInstance {
-                    position: [0.0, MAP_BOUND + 25.0],
-                    size: [(MAP_BOUND + 50.0) * 2.0, 50.0],
-                    rotation: 0.0,
-                    shape_type: 1,
-                    sides: 4,
-                    fill_color: border_color,
-                    border_color,
-                    border_thickness: 0.0,
-                    extra_param: 1.0,
-                },
-                text: None,
-            },
-            RenderEntity {
-                instance: EntityInstance {
-                    position: [0.0, -MAP_BOUND - 25.0],
-                    size: [(MAP_BOUND + 50.0) * 2.0, 50.0],
-                    rotation: 0.0,
-                    shape_type: 1,
-                    sides: 4,
-                    fill_color: border_color,
-                    border_color,
-                    border_thickness: 0.0,
-                    extra_param: 1.0,
-                },
-                text: None,
-            },
-            RenderEntity {
-                instance: EntityInstance {
-                    position: [MAP_BOUND + 25.0, 0.0],
-                    size: [50.0, (MAP_BOUND + 50.0) * 2.0],
-                    rotation: 0.0,
-                    shape_type: 1,
-                    sides: 4,
-                    fill_color: border_color,
-                    border_color,
-                    border_thickness: 0.0,
-                    extra_param: 1.0,
-                },
-                text: None,
-            },
-            RenderEntity {
-                instance: EntityInstance {
-                    position: [-MAP_BOUND - 25.0, 0.0],
-                    size: [50.0, (MAP_BOUND + 50.0) * 2.0],
-                    rotation: 0.0,
-                    shape_type: 1,
-                    sides: 4,
-                    fill_color: border_color,
-                    border_color,
-                    border_thickness: 0.0,
-                    extra_param: 1.0,
                 },
                 text: None,
             },
@@ -1147,8 +1168,8 @@ impl Renderer {
                     shape_type: 4,
                     sides: 4,
                     fill_color: DARK_THEME.health_bar_background,
-                    border_color: DARK_THEME.scoreboard_row,
-                    border_thickness: HEALTH_BAR_BORDER,
+                    border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_background),
+                    border_thickness: 10.,
                     extra_param: 1.0, // full pill
                 },
                 text: None,
@@ -1163,9 +1184,9 @@ impl Renderer {
                         shape_type: 4,
                         sides: 4,
                         fill_color: DARK_THEME.health_bar_foreground,
-                        border_color: [0.0, 0.0, 0.0, 0.0],
-                        border_thickness: 0.0,
-                        extra_param: 1.0, // full pill
+                        border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_foreground),
+                        border_thickness: HEALTH_BAR_BORDER,
+                        extra_param: 1.0,
                     },
                     text: None,
                 });
@@ -1207,8 +1228,8 @@ impl Renderer {
                     shape_type: 4,
                     sides: 4,
                     fill_color: DARK_THEME.health_bar_background,
-                    border_color: DARK_THEME.scoreboard_row,
-                    border_thickness: HEALTH_BAR_BORDER * p.scale,
+                    border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_background),
+                    border_thickness: 0.,
                     extra_param: 1.0, // full pill
                 },
                 text: None,
@@ -1223,8 +1244,9 @@ impl Renderer {
                         shape_type: 4,
                         sides: 4,
                         fill_color: DARK_THEME.health_bar_foreground,
-                        border_color: [0.0, 0.0, 0.0, 0.0],
-                        border_thickness: 0.0,
+                        border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_foreground),
+                        border_thickness: HEALTH_BAR_BORDER, /* player loop: HEALTH_BAR_BORDER *
+                                                              * p.scale */
                         extra_param: 1.0, // full pill
                     },
                     text: None,
@@ -1439,7 +1461,13 @@ impl ApplicationHandler<RenderState> for Renderer {
                         .upgrade_panel
                         .tick(dt, state.cursor_pos, window, screen);
 
-                    state.class_panel.tick(dt, game.class_upgrades_available);
+                    // state.class_panel.tick(dt,
+                    // game.class_upgrades_available);
+                    state.class_panel.tick(
+                        &mut state.font_system,
+                        dt,
+                        game.class_upgrades_available,
+                    );
 
                     Self::update_scoreboard(state, &game, dt);
 
@@ -1486,9 +1514,7 @@ impl ApplicationHandler<RenderState> for Renderer {
                         KeyCode::Enter | KeyCode::NumpadEnter => {
                             if pressed {
                                 if let Some(msg) = state.chat.submit(&mut state.font_system) {
-                                    game.chat_message = Some(msg.clone());
-                                    let channel = game.chat_channel;
-                                    state.chat.receive(&mut state.font_system, channel, &msg);
+                                    game.chat_message = Some(msg);
                                 }
                             }
                         }

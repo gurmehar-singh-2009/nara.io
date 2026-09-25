@@ -1,12 +1,15 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
 use mlua::{Function, Lua};
-use shared::packets::client_bound::TankSpec;
+use paris::error;
 
-use crate::scripting::loader::{TankDef, WeaponDef, load_tank, load_weapon};
+use crate::{
+    fs::tank_defs::{Tank, TankTree},
+    scripting::loader::{TankDef, WeaponDef, load_tank, load_weapon},
+};
 
 #[derive(Default)]
 pub struct WeaponRegistry(std::collections::HashMap<String, WeaponDef>);
@@ -89,10 +92,75 @@ impl TankRegistry {
         Ok(Self(map))
     }
 
-    pub fn specs(&self) -> HashMap<String, TankSpec> {
-        self.0
+    fn resolved(&self, key: &str) -> Option<Tank> {
+        let def = self.0.get(key)?;
+        let mut tank = def.tank.clone();
+        tank.upgrades = def
+            .upgrade_names
             .iter()
-            .map(|(k, v)| (k.clone(), v.spec.clone()))
-            .collect()
+            .filter_map(|name| match self.0.get(name) {
+                Some(target) => Some(target.tank.id),
+                None => {
+                    error!("tank \"{key}\" references unknown upgrade \"{name}\"");
+                    None
+                }
+            })
+            .collect();
+        Some(tank)
+    }
+
+    pub fn build_tree(&self) -> mlua::Result<TankTree> {
+        let basic_key = self
+            .0
+            .iter()
+            .find(|(_, def)| def.tank.name == "Tank")
+            .map(|(key, _)| key.clone())
+            .ok_or_else(|| {
+                mlua::Error::runtime(
+                    "basic tank (name = \"Tank\") not found in content/tanks  \
+                     run `cargo run --bin gen_tanks` first",
+                )
+            })?;
+
+        let basic = self
+            .resolved(&basic_key)
+            .ok_or_else(|| mlua::Error::runtime("failed to resolve basic tank"))?;
+
+        let mut tree: TankTree = vec![vec![basic]];
+        let mut visited: HashSet<u32> = tree[0].iter().map(|t| t.id).collect();
+        let mut current = vec![basic_key];
+
+        loop {
+            let mut next: Vec<String> = Vec::new();
+
+            for key in &current {
+                let Some(def) = self.0.get(key) else {
+                    continue;
+                };
+                for up in &def.upgrade_names {
+                    let Some(target) = self.0.get(up) else {
+                        continue;
+                    };
+                    if visited.contains(&target.tank.id) {
+                        continue;
+                    }
+                    if next.iter().any(|k| k == up) {
+                        continue;
+                    }
+                    visited.insert(target.tank.id);
+                    next.push(up.clone());
+                }
+            }
+
+            if next.is_empty() {
+                break;
+            }
+
+            let tier: Vec<Tank> = next.iter().filter_map(|k| self.resolved(k)).collect();
+            tree.push(tier);
+            current = next;
+        }
+
+        Ok(tree)
     }
 }

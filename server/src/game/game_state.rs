@@ -1,25 +1,37 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use glam::Vec2;
 use nanorand::Rng;
-use paris::error;
+use paris::{error, info};
+use rustrict::CensorStr;
 use shared::packets::{
-    PACKET_SEED,
+    PACKET_SEED, TankOption, TankTreePacket,
     client_bound::{
         AddEntityPacket, BarrelDef, EntityType, LeaderboardPacket, PlayerStatsPacket,
-        RemoveEntityPacket, TankSpec, UpdateEntityPacket, UpdateEntityPacketData,
+        RemoveEntityPacket, UpdateEntityPacket, UpdateEntityPacketData,
     },
+    level_scale,
+    server_bound::ChatMessagePacket,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{
+    anti_cheat::{PlayerWatch, SUSPICION_FLAG_THRESHOLD, multibox_anti, upgrade_anti},
     entities::{
         connections::Connections,
         entity::{Entities, EntityId},
         shape::ShapeKind,
         spatial_hash::{HashEntity, SpatialHash},
+        tank::barrel_defs,
     },
-    fs::{load_config::Config, tank_defs::TankTree},
+    fs::{
+        load_config::Config,
+        tank_defs::{Tank, TankTree},
+    },
     scripting::scripting::Scripting,
 };
 
@@ -30,7 +42,9 @@ pub enum GameEvents {
     PlayerMovement { id: u32, dir: Option<f32> },
     PlayerAutoFire { id: u32, enabled: bool },
     PlayerAim { id: u32, dir: f32 },
+    TankSelect { id: u32, tank_id: u32 },
     TankTree { tree: TankTree },
+    ChatMessage { id: u32, channel: u8, text: String },
 }
 
 const TANK_RADIUS: f32 = 20.0;
@@ -43,23 +57,45 @@ const MAX_SHAPES: usize = 1500;
 const BULLET_SUBSTEPS: u32 = 5;
 const ENTITY_COLLISION_QUERY_RADIUS: f32 = 80.0;
 
+const RECOIL_SCALE: f32 = 10.0;
+
+const TANK_RELOAD_TICKS: u64 = 10;
+
+const MIN_UPGRADE_INTERVAL_MS: u64 = 250;
+const MIN_AIM_SAMPLES: usize = 16;
+const MAX_HUMAN_ANGULAR_VELOCITY: f32 = 75.0;
+const MAX_HUMAN_ANGULAR_JERK: f32 = 10_000.0;
+const MAX_SIGN_INVERSION_RATIO: f32 = 0.90;
+const MULTIBOX_MIN_SAMPLES: usize = 16;
+const MULTIBOX_THRESHOLD_RAD: f32 = 0.05;
+const MULTIBOX_SIMILARITY_FLAG: f32 = 0.97;
+const SUSPICION_DECAY: u32 = 3;
+
+const NUM_TEAMS: u8 = 2;
+const CHAT_WINDOW_MS: u64 = 10_000;
+const CHAT_BURST: usize = 5;
+const CHAT_MIN_GAP_MS: u64 = 400;
+const CHAT_MAX_CHARS: usize = 120;
+
 pub struct GameState {
     pub scripting: Scripting,
     pub spatial_hash: SpatialHash,
     pub game_channel_recv: UnboundedReceiver<GameEvents>,
     pub connections: Connections,
     players: HashMap<u32, EntityId>,
+    watch: HashMap<u32, PlayerWatch>,
     rnd: nanorand::WyRand,
     tick_count: u64,
     tank_tree: TankTree,
     config: Arc<Config>,
+    teams: HashMap<u32, u8>,
+    chat_times: HashMap<u32, VecDeque<u64>>,
 }
 
 impl GameState {
     pub fn new(
         game_channel_recv: UnboundedReceiver<GameEvents>,
         connections: Connections,
-        tank_tree: TankTree,
         config: Arc<Config>,
     ) -> mlua::Result<Self> {
         let mut scripting = Scripting::new(Entities::new())?;
@@ -78,6 +114,9 @@ impl GameState {
             error!("content/ not found!! maybe run from the repo root or adjust path?");
         }
 
+        let tank_tree = scripting.tanks.build_tree()?;
+        info!("loaded {} tank tiers from content/tanks", tank_tree.len());
+
         scripting
             .entities_mut()
             .set_tank_tree(Arc::new(tank_tree.clone()));
@@ -88,10 +127,13 @@ impl GameState {
             game_channel_recv,
             connections,
             players: HashMap::new(),
+            watch: HashMap::new(),
             rnd: nanorand::WyRand::new(),
             tick_count: 0,
             tank_tree,
             config,
+            teams: HashMap::new(),
+            chat_times: HashMap::new(),
         })
     }
 
@@ -104,6 +146,7 @@ impl GameState {
         loop {
             self.tick_count += 1;
             self.drain_events();
+            self.reload_tanks();
             self.tick_shape_orbits(dt);
 
             self.regen_health();
@@ -116,6 +159,8 @@ impl GameState {
                 .broadcast(UpdateEntityPacket::new(entity_updates, PACKET_SEED as u64));
 
             self.broadcast_player_stats();
+            self.send_tank_upgrade_offers();
+            self.run_anti_cheat_pass();
             if self.tick_count % 10 == 0 {
                 self.broadcast_leaderboard();
             }
@@ -131,6 +176,25 @@ impl GameState {
         }
     }
 
+    fn reload_tanks(&mut self) {
+        if self.tick_count % TANK_RELOAD_TICKS != 0 {
+            return;
+        }
+
+        match self.scripting.reload_tanks_if_changed() {
+            Ok(Some(tree)) => {
+                info!("tank definitions reloaded from content/tanks");
+                let event = GameEvents::TankTree { tree };
+                self.handle_game_events(&event);
+                if let Err(err) = self.scripting.dispatch_event(&event) {
+                    error!("Lua event error: {err}");
+                }
+            }
+            Ok(None) => {}
+            Err(err) => error!("tank reload failed (keeping old defs): {err}"),
+        }
+    }
+
     fn drain_events(&mut self) {
         while let Ok(msg) = self.game_channel_recv.try_recv() {
             self.handle_game_events(&msg);
@@ -142,12 +206,22 @@ impl GameState {
 
     fn handle_game_events(&mut self, msg: &GameEvents) {
         match &msg {
-            GameEvents::PlayerSpawn { id, name } => self.spawn_player(*id, name),
+            GameEvents::PlayerSpawn { id, name } => {
+                self.spawn_player(*id, name);
+                self.watch.entry(*id).or_default();
+                self.teams.insert(*id, self.least_populated_team());
+            }
             GameEvents::PlayerDisconnect { id } => {
                 if let Some(entity_id) = self.players.remove(id) {
                     self.scripting.entities_mut().despawn(entity_id);
                 }
                 self.connections.remove(*id);
+                self.watch.remove(id);
+                self.teams.remove(id);
+                self.chat_times.remove(id);
+            }
+            GameEvents::ChatMessage { id, channel, text } => {
+                self.handle_chat(*id, *channel, text.clone())
             }
             GameEvents::PlayerMovement { id, dir } => {
                 self.with_live_entity(*id, |entities, eid| {
@@ -165,11 +239,172 @@ impl GameState {
                         *tank.aim = *dir;
                     }
                 });
+                self.record_aim_sample(*id, *dir);
             }
+            GameEvents::TankSelect { id, tank_id } => self.apply_tank_upgrade(*id, *tank_id),
             GameEvents::TankTree { tree } => {
                 self.tank_tree = tree.clone();
+
+                let mut updated: Vec<(u32, EntityId)> = Vec::new();
+                {
+                    let mut entities = self.scripting.entities_mut();
+                    entities.set_tank_tree(Arc::new(tree.clone()));
+
+                    for (&conn_id, &entity_id) in self.players.iter() {
+                        let current_id = match entities.tanks.get(entity_id) {
+                            Some(tank) => tank.tank_type.id,
+                            None => continue,
+                        };
+                        if let Some((_, def)) = find_def(tree, current_id) {
+                            if entities.tanks.apply_def(entity_id, def) {
+                                updated.push((conn_id, entity_id));
+                            }
+                        }
+                    }
+
+                    entities.tanks.reset_offers();
+                }
+
+                for (conn_id, entity_id) in updated {
+                    self.broadcast_player_def(conn_id, entity_id);
+                }
             }
         }
+    }
+
+    fn handle_chat(&mut self, conn_id: u32, channel: u8, text: String) {
+        let Some(&entity_id) = self.players.get(&conn_id) else {
+            return;
+        };
+
+        let name = {
+            let entities = self.scripting.entities_mut();
+            entities
+                .tanks
+                .get(entity_id)
+                .map(|t| t.name.to_string())
+                .unwrap_or_default()
+        };
+
+        let now = now_ms();
+
+        {
+            let times = self.chat_times.entry(conn_id).or_default();
+            if let Some(&last) = times.back() {
+                if now.saturating_sub(last) < CHAT_MIN_GAP_MS {
+                    return;
+                }
+            }
+            times.push_back(now);
+            while let Some(&front) = times.front() {
+                if now.saturating_sub(front) > CHAT_WINDOW_MS {
+                    times.pop_front();
+                } else {
+                    break;
+                }
+            }
+            if times.len() > CHAT_BURST {
+                let notice = ChatMessagePacket::new(
+                    channel,
+                    0,
+                    now / 1000,
+                    String::new(),
+                    "You are sending messages too quickly.".to_string(),
+                    PACKET_SEED as u64,
+                );
+                self.connections.send_to(conn_id, notice);
+                return;
+            }
+        }
+
+        let text = text.trim();
+        if text.is_empty() || text.chars().count() > CHAT_MAX_CHARS {
+            return;
+        }
+        let censored = text.censor().to_string();
+
+        let team = self.teams.get(&conn_id).copied().unwrap_or(0);
+        let packet = ChatMessagePacket::new(
+            channel,
+            team,
+            now / 1000,
+            name,
+            censored,
+            PACKET_SEED as u64,
+        );
+
+        if channel == 1 {
+            let recipients: Vec<u32> = self
+                .teams
+                .iter()
+                .filter(|&(_, &t)| t == team)
+                .map(|(&id, _)| id)
+                .collect();
+            for id in recipients {
+                self.connections.send_to(id, packet.clone());
+            }
+        } else {
+            self.connections.broadcast(packet);
+        }
+    }
+
+    fn least_populated_team(&self) -> u8 {
+        let mut counts = [0usize; NUM_TEAMS as usize];
+        for &team in self.teams.values() {
+            let i = (team as usize).min(counts.len() - 1);
+            counts[i] += 1;
+        }
+        counts
+            .iter()
+            .enumerate()
+            .min_by_key(|&(_, &count)| count)
+            .map(|(i, _)| i as u8)
+            .unwrap_or(0)
+    }
+
+    fn broadcast_player_def(&mut self, conn_id: u32, entity_id: EntityId) {
+        let (x, y, level, name, barrels) = {
+            let entities = self.scripting.entities_mut();
+            let Some(entity) = entities.get(entity_id) else {
+                return;
+            };
+            let Some(tank) = entities.tanks.get(entity_id) else {
+                return;
+            };
+            (
+                entity.position.x,
+                entity.position.y,
+                *tank.level,
+                tank.name.to_string(),
+                tank.barrels.clone(),
+            )
+        };
+
+        let my_packet = AddEntityPacket::new(
+            conn_id,
+            EntityType::Player,
+            x,
+            y,
+            level,
+            name.clone(),
+            true,
+            barrels.clone(),
+            PACKET_SEED as u64,
+        );
+        let other_packet = AddEntityPacket::new(
+            conn_id,
+            EntityType::Player,
+            x,
+            y,
+            level,
+            name,
+            false,
+            barrels,
+            PACKET_SEED as u64,
+        );
+        self.connections.send_to(conn_id, my_packet);
+        self.connections
+            .broadcast_with_exceptions(other_packet, &[conn_id]);
     }
 
     fn with_live_entity(&mut self, id: u32, f: impl FnOnce(&mut Entities, EntityId)) {
@@ -179,6 +414,195 @@ impl GameState {
         let mut entities = self.scripting.entities_mut();
         if entities.is_alive(entity_id) {
             f(&mut entities, entity_id);
+        }
+    }
+
+    fn record_aim_sample(&mut self, id: u32, dir: f32) {
+        let now = now_ms();
+        let Some(watch) = self.watch.get_mut(&id) else {
+            return;
+        };
+
+        watch.record_aim(now, dir);
+
+        let analysis = watch.aim.analysis();
+        if analysis.samples >= MIN_AIM_SAMPLES {
+            if analysis.max_velocity > MAX_HUMAN_ANGULAR_VELOCITY {
+                watch.tracker.add_score(10);
+            }
+            if analysis.max_jerk > MAX_HUMAN_ANGULAR_JERK {
+                watch.tracker.add_score(6);
+            }
+            if analysis.sign_inversion > MAX_SIGN_INVERSION_RATIO {
+                watch.tracker.add_score(4);
+            }
+        }
+    }
+
+    fn apply_tank_upgrade(&mut self, conn_id: u32, tank_id: u32) {
+        let Some(&entity_id) = self.players.get(&conn_id) else {
+            return;
+        };
+        let Some((tier, def)) = find_def(&self.tank_tree, tank_id) else {
+            error!("player {conn_id} requested unknown tank {tank_id}");
+            return;
+        };
+
+        let now = now_ms();
+        {
+            let watch = self.watch.entry(conn_id).or_default();
+            if !upgrade_anti::check_upgrade_interval(
+                watch.last_upgrade_ms,
+                now,
+                MIN_UPGRADE_INTERVAL_MS,
+            ) {
+                watch.tracker.add_score(25);
+                error!("player {conn_id} tank upgrade rejected: interval too short");
+                return;
+            }
+            watch.last_upgrade_ms = now;
+        }
+
+        {
+            let mut entities = self.scripting.entities_mut();
+            let (level, upgrade_ids) = {
+                let Some(tank) = entities.tanks.get(entity_id) else {
+                    return;
+                };
+                (*tank.level, tank.tank_type.upgrades.clone())
+            };
+
+            if !upgrade_ids.contains(&tank_id) {
+                if let Some(watch) = self.watch.get_mut(&conn_id) {
+                    watch.tracker.add_score(40);
+                }
+                error!(
+                    "player {conn_id} requested tank {} ({}) outside their upgrade path",
+                    tank_id, def.name
+                );
+                return;
+            }
+
+            if level < def.level_requirement {
+                if let Some(watch) = self.watch.get_mut(&conn_id) {
+                    watch.tracker.add_score(40);
+                }
+                error!("player {conn_id} requested tank {tank_id} below its level requirement");
+                return;
+            }
+
+            entities.tanks.apply_def(entity_id, def);
+        }
+
+        info!("player {conn_id} upgraded to {} (tier {tier})", def.name);
+        self.broadcast_player_def(conn_id, entity_id);
+    }
+
+    fn send_tank_upgrade_offers(&mut self) {
+        let mut offers: Vec<(u32, Vec<TankOption>)> = Vec::new();
+        {
+            let mut entities = self.scripting.entities_mut();
+            for (&conn_id, &entity_id) in self.players.iter() {
+                let (current_id, level, upgrade_ids) = {
+                    let Some(tank) = entities.tanks.get(entity_id) else {
+                        continue;
+                    };
+                    (
+                        tank.tank_type.id,
+                        *tank.level,
+                        tank.tank_type.upgrades.clone(),
+                    )
+                };
+
+                if entities.tanks.offered_for(entity_id) == Some(current_id) {
+                    continue;
+                }
+
+                let options: Vec<TankOption> = upgrade_ids
+                    .iter()
+                    .filter_map(|uid| find_def(&self.tank_tree, *uid))
+                    .filter(|(_, def)| !def.flags.dev_only)
+                    .filter(|(_, def)| level >= def.level_requirement)
+                    .map(|(tier, def)| TankOption {
+                        id: def.id,
+                        name: def.name.clone(),
+                        tier,
+                        sides: def.sides,
+                        barrels: barrel_defs(def),
+                    })
+                    .collect();
+
+                if options.is_empty() {
+                    continue;
+                }
+
+                entities.tanks.set_offered(entity_id, current_id);
+                offers.push((conn_id, options));
+            }
+        }
+
+        for (conn_id, options) in offers {
+            info!(
+                "offering {} tank upgrades to player {conn_id}",
+                options.len()
+            );
+            self.connections
+                .send_to(conn_id, TankTreePacket::new(options, PACKET_SEED as u64));
+        }
+    }
+
+    fn run_anti_cheat_pass(&mut self) {
+        if self.tick_count % 100 == 0 {
+            for watch in self.watch.values_mut() {
+                watch.tracker.decay(SUSPICION_DECAY);
+            }
+        }
+
+        if self.tick_count % 10 != 0 {
+            return;
+        }
+
+        let series: Vec<(u32, Vec<f32>)> = self
+            .watch
+            .iter()
+            .filter(|(_, watch)| watch.aim.len() >= MULTIBOX_MIN_SAMPLES)
+            .map(|(id, watch)| (*id, watch.aim.angles()))
+            .collect();
+
+        for i in 0..series.len() {
+            for j in (i + 1)..series.len() {
+                let similarity = multibox_anti::calculate_input_similarity(
+                    &series[i].1,
+                    &series[j].1,
+                    MULTIBOX_THRESHOLD_RAD,
+                );
+                if similarity >= MULTIBOX_SIMILARITY_FLAG {
+                    let (a, b) = (series[i].0, series[j].0);
+                    if let Some(watch) = self.watch.get_mut(&a) {
+                        watch.tracker.add_score(20);
+                    }
+                    if let Some(watch) = self.watch.get_mut(&b) {
+                        watch.tracker.add_score(20);
+                    }
+                    error!("multibox suspicion between players {a} and {b} ({similarity:.3})");
+                }
+            }
+        }
+
+        let flagged: Vec<(u32, u32)> = self
+            .watch
+            .iter()
+            .filter(|(_, watch)| {
+                !watch.reported && watch.tracker.is_flagged(SUSPICION_FLAG_THRESHOLD)
+            })
+            .map(|(id, watch)| (*id, watch.tracker.score))
+            .collect();
+
+        for (id, score) in flagged {
+            if let Some(watch) = self.watch.get_mut(&id) {
+                watch.reported = true;
+            }
+            error!("player {id} flagged by anti-cheat (score {score})");
         }
     }
 
@@ -195,7 +619,12 @@ impl GameState {
         );
         self.players.insert(id, entity_id);
 
-        let barrels = default_barrels();
+        let barrels = self
+            .tank_tree
+            .first()
+            .and_then(|tier| tier.first())
+            .map(barrel_defs)
+            .unwrap_or_else(default_barrels);
         let my_packet = AddEntityPacket::new(
             id,
             EntityType::Player,
@@ -303,18 +732,18 @@ impl GameState {
             let tank_data = entities
                 .tanks
                 .get(id)
-                .map(|t| (*t.move_dir, *t.aim, *t.level));
+                .map(|t| (*t.move_dir, *t.aim, *t.level, t.tank_type.speed));
             let health = entities.get(id).map(|e| *e.health).unwrap_or(0);
             let max_health = entity_max_health(&entities, id);
 
-            if let Some((move_dir, aim, level)) = tank_data {
+            if let Some((move_dir, aim, level, speed_mult)) = tank_data {
                 let current_max_speed =
-                    self.config.player.speed * (1.0 + (level - 1) as f32 * 0.02);
+                    self.config.player.speed * (1.0 + (level - 1) as f32 * 0.02) * speed_mult;
                 step_tank_velocity(&mut entities, i, move_dir, current_max_speed, dt);
                 clamp_tank_position(&mut entities, i);
 
                 if let Some(conn_id) = entity_to_conn.get(&id).copied() {
-                    let scale = 1.0 + (level - 1) as f32 * 0.08;
+                    let scale = level_scale(level);
                     updates.push(UpdateEntityPacketData {
                         id: conn_id,
                         entity_type: EntityType::Player,
@@ -322,12 +751,15 @@ impl GameState {
                         y: entities.positions[i].y,
                         rot: aim,
                         scale,
+                        kind: 0,
                         health,
                         max_health,
                     });
                 }
-            } else if let Some(rot) = entities.shapes.get(id).map(|s| *s.rotation) {
+            } else if let Some(shape) = entities.shapes.get(id) {
                 let net_id = 0x80000000 | (i as u32);
+                let rot = *shape.rotation;
+                let kind = shape_kind_id(*shape.kind);
                 updates.push(UpdateEntityPacketData {
                     id: net_id,
                     entity_type: EntityType::Shape,
@@ -335,6 +767,7 @@ impl GameState {
                     y: entities.positions[i].y,
                     rot,
                     scale: 1.0,
+                    kind,
                     health,
                     max_health,
                 });
@@ -349,6 +782,7 @@ impl GameState {
                 y: pos.y,
                 rot: 0.0,
                 scale: 1.0,
+                kind: 0,
                 health: 1,
                 max_health: 1,
             });
@@ -650,52 +1084,77 @@ impl GameState {
     }
 
     fn fire_auto_weapons(&mut self, dt: f32) {
-        let mut entities = self.scripting.entities_mut();
         let ids: Vec<EntityId> = self.players.values().copied().collect();
 
+        let mut entities = self.scripting.entities_mut();
+        let Entities {
+            tanks,
+            bullets,
+            positions,
+            velocities,
+            alive,
+            ..
+        } = &mut *entities;
+
         for id in ids {
-            if !entities.is_alive(id) {
+            if !alive.get(id.index).copied().unwrap_or(false) {
                 continue;
             }
-            let Some(entity) = entities.get(id) else {
-                continue;
-            };
-            let position = *entity.position;
+            let position = *positions.get(id.index).unwrap_or(&Vec2::ZERO);
 
-            let Some(tank) = entities.tanks.get_mut(id) else {
+            let Some(t) = tanks.get_mut(id) else {
                 continue;
             };
-            if !*tank.auto_fire {
+
+            if !t.tank_type.flags.can_shoot {
                 continue;
             }
 
-            *tank.reload_timer -= dt;
-            if *tank.reload_timer > 0.0 {
-                continue;
-            }
+            let auto_fire = *t.auto_fire;
+            let aim = *t.aim;
+            let base_damage = *t.bullet_damage;
+            let base_speed = *t.bullet_speed;
+            let reload_time = *t.reload_time;
 
-            let bullet_damage = *tank.bullet_damage;
-            let bullet_speed = *tank.bullet_speed;
-            *tank.reload_timer += *tank.reload_time;
-            let aim = *tank.aim;
+            for (i, barrel) in t.tank_type.barrels.iter().enumerate() {
+                while t.barrel_timers.len() <= i {
+                    t.barrel_timers.push(0.0);
+                }
 
-            let barrels = if tank.barrels.is_empty() {
-                default_barrels()
-            } else {
-                tank.barrels.clone()
-            };
+                let timer = &mut t.barrel_timers[i];
+                *timer -= dt;
+                if *timer > 0.0 {
+                    continue;
+                }
 
-            for barrel in &barrels {
+                if !auto_fire {
+                    *timer = 0.0;
+                    continue;
+                }
+
+                let cycle = (reload_time * barrel.reload).max(0.05);
+                *timer += cycle;
+
                 let barrel_angle = barrel.angle.to_radians();
                 let muzzle_local =
                     Vec2::new(barrel.x, barrel.y) + Vec2::from_angle(barrel_angle) * barrel.length;
                 let world_angle = aim + barrel_angle;
                 let muzzle_world = position + Vec2::from_angle(aim).rotate(muzzle_local);
-                let velocity = Vec2::from_angle(world_angle) * bullet_speed;
 
-                entities
-                    .bullets
-                    .spawn(muzzle_world, velocity, bullet_damage, BULLET_LIFETIME, id);
+                let damage = ((base_damage as f32 * barrel.bullet.damage).round() as u32).max(1);
+                let speed = base_speed * barrel.bullet.speed;
+                let lifetime = BULLET_LIFETIME * barrel.bullet.life_length;
+
+                bullets.spawn(
+                    muzzle_world,
+                    Vec2::from_angle(world_angle) * speed,
+                    damage,
+                    lifetime,
+                    id,
+                );
+
+                velocities[id.index] -=
+                    Vec2::from_angle(world_angle) * (barrel.recoil * RECOIL_SCALE);
             }
         }
     }
@@ -709,6 +1168,21 @@ fn default_barrels() -> Vec<BarrelDef> {
         width: 18.0,
         length: 40.0,
     }]
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn find_def(tree: &TankTree, id: u32) -> Option<(u32, &Tank)> {
+    tree.iter().enumerate().find_map(|(tier, row)| {
+        row.iter()
+            .find(|tank| tank.id == id)
+            .map(|tank| (tier as u32, tank))
+    })
 }
 
 fn shape_max_health(kind: ShapeKind) -> u32 {
@@ -799,19 +1273,20 @@ fn grant_xp(entities: &mut Entities, owner: EntityId, xp_gained: u32) {
     let Some(owner_tank) = entities.tanks.get_mut(owner) else {
         return;
     };
-    owner_tank.xp.0 += xp_gained;
+    owner_tank.xp.0 = owner_tank.xp.0.saturating_add(xp_gained);
     let start_level = *owner_tank.level;
     while owner_tank.xp.0 >= owner_tank.xp.1 && *owner_tank.level < MAX_LEVEL {
         owner_tank.xp.0 -= owner_tank.xp.1;
-        owner_tank.xp.1 = (owner_tank.xp.1 as f32 * 1.12).min(100000.0) as u32;
+        owner_tank.xp.1 = 1; //(owner_tank.xp.1 as f32 * 1.12).min(100000.0) as u32;
         *owner_tank.level += 1;
         *owner_tank.max_health += 10;
         *owner_tank.bullet_damage += 2;
         *owner_tank.bullet_speed += 10.0;
         *owner_tank.reload_time = (*owner_tank.reload_time * 0.98).max(0.1);
     }
-    if *owner_tank.level == MAX_LEVEL {
-        owner_tank.xp.0 = owner_tank.xp.1 - 1;
+
+    if *owner_tank.level == MAX_LEVEL && start_level < MAX_LEVEL {
+        owner_tank.xp.0 = owner_tank.xp.0.min(owner_tank.xp.1.saturating_sub(1));
     }
 
     let levels_gained = *owner_tank.level - start_level;

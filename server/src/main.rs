@@ -10,9 +10,7 @@ use std::{ops::Deref, sync::Arc};
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use shared::packets::{
-    PACKET_SEED, Packet,
-    handshake::HandshakePacket,
-    server_bound::{AimPacket, AutoFirePacket, MovementPacket, SpawnReqPacket},
+    PACKET_SEED, Packet, TankSelectPacket, handshake::HandshakePacket, server_bound::{AimPacket, AutoFirePacket, ChatSendPacket, MovementPacket, SpawnReqPacket},
 };
 use snafu::ResultExt;
 use tokio::{net::TcpListener, sync::mpsc::unbounded_channel};
@@ -29,7 +27,7 @@ use paris::{error, info, log};
 use crate::{
     entities::connections::Connections,
     errors::{LoadConfigSnafu, PortBindFailureSnafu, ServerError},
-    fs::{load_config::Config, tank_defs::load_tank_tree},
+    fs::load_config::Config,
     game::game_state::{GameEvents, GameState},
     net::{
         ClientConnection,
@@ -65,35 +63,26 @@ async fn main() -> Result<(), ServerError> {
 
     // Map of all connections -> Player and vice versa.
     let connections = Connections::new();
-    let tank_tree = load_tank_tree();
     let config = Config::load("src/fs/data/config.toml").context(LoadConfigSnafu)?;
     let config = Arc::new(config);
 
     // Channel system for the game state.
     let (game_channel_send, game_channel_recv) = unbounded_channel::<GameEvents>();
     let game_channel_send = Arc::new(game_channel_send);
-    let mut game_state = match GameState::new(
-        game_channel_recv,
-        connections.clone(),
-        tank_tree,
-        config.clone(),
-    ) {
-        Ok(state) => state,
-        Err(e) => {
-            eprintln!(
-                "Failed to initialize game state! Missing file or script error: {}",
-                e
-            );
+    // tank definitions come from content/tanks/*.lua now; the game state
+    // builds the tree itself and hot-reloads it in its loop
+    let mut game_state =
+        match GameState::new(game_channel_recv, connections.clone(), config.clone()) {
+            Ok(state) => state,
+            Err(e) => {
+                eprintln!(
+                    "Failed to initialize game state! Missing file or script error: {}",
+                    e
+                );
 
-            std::process::exit(1);
-        }
-    };
-
-    game_channel_send
-        .send(GameEvents::TankTree {
-            tree: load_tank_tree(),
-        })
-        .unwrap();
+                std::process::exit(1);
+            }
+        };
 
     // Spawn a system thread to offload our core game loop to.
     // We utilize channels so we can actually send messages to the game state.
@@ -209,8 +198,10 @@ async fn main() -> Result<(), ServerError> {
                         }
                     };
 
-                    // We expect the first packet to be the handshake initiation, otherwise
-                    // we disconnect the client. In the future soft ban the client based on IP.
+                    // We expect the first packet to be the handshake
+                    // initiation, otherwise we disconnect
+                    // the client. In the future soft ban the client based on
+                    // IP.
                     match client_connection.respond_handshake(
                         &PublicKey::from(<[u8; 32]>::try_from(&decoded.handshake[..32]).unwrap()),
                         &signing_key,
@@ -292,6 +283,29 @@ async fn main() -> Result<(), ServerError> {
                             }
                             Err(_) => {
                                 log!("failed to decode AimPacket from {id}");
+                            }
+                        },
+
+                        11 => match TankSelectPacket::decode(&plaintext) {
+                            Ok(TankSelectPacket { tank_id, .. }) => {
+                                let _ =
+                                    game_channel_send.send(GameEvents::TankSelect { id, tank_id });
+                            }
+                            Err(_) => {
+                                log!("failed to decode TankSelectPacket from {id}");
+                            }
+                        },
+
+                        12 => match ChatSendPacket::decode(&plaintext) {
+                            Ok(ChatSendPacket { channel, text, .. }) => {
+                                let _ = game_channel_send.send(GameEvents::ChatMessage {
+                                    id,
+                                    channel,
+                                    text,
+                                });
+                            }
+                            Err(_) => {
+                                log!("failed to decode ChatSendPacket from {id}");
                             }
                         },
 

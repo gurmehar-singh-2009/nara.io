@@ -1,10 +1,3 @@
-//! remember: big o notation is bullshit.
-//! always take into account memory access patterns by the cpu (L1 L2 cache,
-//! etc).
-//!
-//! this should be relatively cheap to recreate each tick.
-//! DEFINITELY better than a quadtree.
-
 use crate::entities::entity::EntityId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -8,20 +8,28 @@ use hkdf::Hkdf;
 use js_sys::Uint8Array;
 use sha2::Sha256;
 use shared::packets::{
-    PACKET_SEED, Packet,
+    PACKET_SEED, Packet, TankSelectPacket, TankTreePacket,
     client_bound::{
         AddEntityPacket, EntityType, LeaderboardPacket, PlayerStatsPacket, RemoveEntityPacket,
         UpdateEntityPacket,
     },
     handshake::{HandShake, HandshakePacket},
-    server_bound::{AimPacket, AutoFirePacket, MovementPacket, SpawnReqPacket},
+    level_scale,
+    server_bound::{
+        AimPacket, AutoFirePacket, ChatMessagePacket, ChatSendPacket, MovementPacket,
+        SpawnReqPacket,
+    },
 };
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{Crypto, HtmlInputElement, window};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use crate::{entities::tank::Tank, structs::game_state::GameState};
+use crate::{
+    entities::tank::Tank,
+    render::tank_upgrades,
+    structs::game_state::{ChatChannel, GameState, IncomingChat},
+};
 
 pub struct Socket {
     pub secret_key: StaticSecret,
@@ -264,19 +272,33 @@ impl Socket {
                                     let mut game = game_for_reader.borrow_mut();
                                     match data.entity_type {
                                         EntityType::Player => {
-                                            let mut entity = Tank::new(
-                                                data.id,
-                                                data.name,
-                                                Vec2::from_array([data.x, data.y]),
-                                            );
-                                            entity.scale = 1.0 + (data.level - 1) as f32 * 0.08;
-                                            entity.barrels = data.barrels.clone();
-                                            if data.is_entity_mine {
-                                                game.my_player_id = Some(data.id);
+                                            if let Some(existing) =
+                                                game.players.iter_mut().find(|p| p.id == data.id)
+                                            {
+                                                // existing.scale =
+                                                //     1.0 + (data.level - 1) as
+                                                // f32 * 0.08;
+                                                existing.scale = level_scale(data.level);
+                                                existing.barrels = data.barrels.clone();
+                                            } else {
+                                                let mut entity = Tank::new(
+                                                    data.id,
+                                                    data.name,
+                                                    Vec2::from_array([data.x, data.y]),
+                                                );
+                                                // entity.scale = 1.0 +
+                                                // (data.level - 1) as f32 *
+                                                // 0.08;
+                                                entity.scale = level_scale(data.level);
+                                                entity.barrels = data.barrels.clone();
+                                                if data.is_entity_mine {
+                                                    game.my_player_id = Some(data.id);
+                                                }
+                                                game.players.push(entity);
                                             }
-                                            game.players.push(entity);
                                         }
                                         EntityType::Shape => {
+                                            game.shapes.retain(|s| s.id != data.id);
                                             let shape = crate::entities::square::Shape::new(
                                                 data.id, data.x, data.y, data.level,
                                             );
@@ -341,7 +363,7 @@ impl Socket {
                                                 } else {
                                                     let mut new_shape =
                                                         crate::entities::square::Shape::new(
-                                                            entry.id, entry.x, entry.y, 1,
+                                                            entry.id, entry.x, entry.y, entry.kind,
                                                         );
                                                     new_shape.last_update_time = current_time;
                                                     game.shapes.push(new_shape);
@@ -429,6 +451,73 @@ impl Socket {
                                         }
                                     }
 
+                                    if let Some(choice) = game.class_choice.take() {
+                                        game.class_upgrades_available = false;
+
+                                        if choice > 0 {
+                                            if let Some(option) = tank_upgrades::current_options()
+                                                .get((choice - 1) as usize)
+                                            {
+                                                let my_player_id = game.my_player_id;
+                                                if let Some(player) = game
+                                                    .players
+                                                    .iter_mut()
+                                                    .find(|p| Some(p.id) == my_player_id)
+                                                {
+                                                    player.barrels = option.barrels.clone();
+                                                }
+
+                                                let plaintext = TankSelectPacket::new(
+                                                    option.id,
+                                                    PACKET_SEED as u64,
+                                                )
+                                                .encode();
+                                                let nonce_counter = {
+                                                    let mut counter =
+                                                        send_nonce_count_for_reader.borrow_mut();
+                                                    let value = *counter;
+                                                    *counter += 1;
+                                                    value
+                                                };
+                                                let cipher_ref = send_cipher_for_reader.borrow();
+                                                if let Some(cipher) = cipher_ref.as_ref() {
+                                                    if let Ok(encrypted) = cipher.encrypt(
+                                                        &nonce(nonce_counter),
+                                                        plaintext.as_ref(),
+                                                    ) {
+                                                        let _ =
+                                                            tx.unbounded_send(encrypted.to_vec());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if let Some(text) = game.chat_message.take() {
+                                        let channel = match game.chat_channel {
+                                            ChatChannel::Global => 0u8,
+                                            ChatChannel::Team => 1u8,
+                                        };
+                                        let plaintext =
+                                            ChatSendPacket::new(channel, text, PACKET_SEED as u64)
+                                                .encode();
+                                        let nonce_counter = {
+                                            let mut counter =
+                                                send_nonce_count_for_reader.borrow_mut();
+                                            let value = *counter;
+                                            *counter += 1;
+                                            value
+                                        };
+                                        let cipher_ref = send_cipher_for_reader.borrow();
+                                        if let Some(cipher) = cipher_ref.as_ref() {
+                                            if let Ok(encrypted) = cipher
+                                                .encrypt(&nonce(nonce_counter), plaintext.as_ref())
+                                            {
+                                                let _ = tx.unbounded_send(encrypted.to_vec());
+                                            }
+                                        }
+                                    }
+
                                     drop(game);
                                 }
                                 Err(e) => {
@@ -487,6 +576,7 @@ impl Socket {
 
                                     if is_my_player {
                                         game.my_player_id = None;
+                                        game.class_upgrades_available = false;
                                         if let Some(window) = web_sys::window() {
                                             if let Some(document) = window.document() {
                                                 if let Some(menu) =
@@ -499,6 +589,10 @@ impl Socket {
                                         }
                                     }
                                     drop(game);
+
+                                    if is_my_player {
+                                        tank_upgrades::push_tank_options(Vec::new());
+                                    }
                                 }
                                 Err(e) => {
                                     web_sys::console::error_1(
@@ -516,6 +610,44 @@ impl Socket {
                                 Err(e) => {
                                     web_sys::console::error_1(
                                         &format!("LeaderboardPacket decode failed: {e:?}").into(),
+                                    );
+                                }
+                            },
+
+                            10 => match TankTreePacket::decode(&plaintext) {
+                                Ok(data) => {
+                                    let mut game = game_for_reader.borrow_mut();
+                                    game.class_upgrades_available = !data.tanks.is_empty();
+                                    drop(game);
+                                    tank_upgrades::push_tank_options(data.tanks);
+                                }
+                                Err(e) => {
+                                    web_sys::console::error_1(
+                                        &format!("TankTreePacket decode failed: {e:?}").into(),
+                                    );
+                                }
+                            },
+
+                            13 => match ChatMessagePacket::decode(&plaintext) {
+                                Ok(data) => {
+                                    let channel = if data.channel == 1 {
+                                        ChatChannel::Team
+                                    } else {
+                                        ChatChannel::Global
+                                    };
+                                    let mut game = game_for_reader.borrow_mut();
+                                    game.incoming_chat.push(IncomingChat {
+                                        channel,
+                                        team: data.team,
+                                        sender: data.sender,
+                                        text: data.text,
+                                        timestamp: data.timestamp,
+                                    });
+                                    drop(game);
+                                }
+                                Err(e) => {
+                                    web_sys::console::error_1(
+                                        &format!("ChatMessagePacket decode failed: {e:?}").into(),
                                     );
                                 }
                             },

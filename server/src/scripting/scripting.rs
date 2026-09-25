@@ -1,13 +1,15 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
+    time::SystemTime,
 };
 
 use mlua::{Function, Lua};
 
 use crate::{
     entities::entity::Entities,
+    fs::tank_defs::TankTree,
     game::{game_state::GameEvents, scheduler::Scheduler},
     scripting::registery::{TankRegistry, WeaponRegistry, register_commands, register_events},
 };
@@ -22,6 +24,32 @@ pub struct Scripting {
     pub abilities: Option<()>,
     pub commands: Arc<Mutex<HashMap<String, Function>>>,
     pub scheduler: Scheduler,
+
+    tanks_dir: Option<PathBuf>,
+    tank_mtimes: Vec<(PathBuf, SystemTime)>,
+}
+
+fn snapshot_tank_files(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("lua"))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+
+    files
+        .into_iter()
+        .map(|p| {
+            let mtime = p
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            (p, mtime)
+        })
+        .collect()
 }
 
 impl Scripting {
@@ -47,6 +75,8 @@ impl Scripting {
             abilities: None,
             commands,
             scheduler: Scheduler::default(),
+            tanks_dir: None,
+            tank_mtimes: Vec::new(),
         })
     }
 
@@ -66,12 +96,14 @@ impl Scripting {
         }
 
         let weapons_dir = format!("{dir}/weapons");
-        if std::path::Path::new(&weapons_dir).is_dir() {
+        if Path::new(&weapons_dir).is_dir() {
             self.weapons = WeaponRegistry::load_all(&self.lua, &weapons_dir)?;
         }
         let tanks_dir = format!("{dir}/tanks");
-        if std::path::Path::new(&tanks_dir).is_dir() {
+        if Path::new(&tanks_dir).is_dir() {
             self.tanks = TankRegistry::load_all(&self.lua, &tanks_dir)?;
+            self.tanks_dir = Some(PathBuf::from(&tanks_dir));
+            self.tank_mtimes = snapshot_tank_files(self.tanks_dir.as_deref().unwrap());
         }
 
         Ok(())
@@ -85,6 +117,25 @@ impl Scripting {
 
     pub fn entities_mut(&self) -> MutexGuard<'_, Entities> {
         self.entities()
+    }
+
+    pub fn reload_tanks_if_changed(&mut self) -> mlua::Result<Option<TankTree>> {
+        let Some(dir) = self.tanks_dir.clone() else {
+            return Ok(None);
+        };
+
+        let current = snapshot_tank_files(&dir);
+        if current == self.tank_mtimes {
+            return Ok(None);
+        }
+
+        let registry = TankRegistry::load_all(&self.lua, dir.to_string_lossy().as_ref())?;
+        let tree = registry.build_tree()?;
+
+        self.tanks = registry;
+        self.tank_mtimes = current;
+
+        Ok(Some(tree))
     }
 
     pub fn dispatch_event(&mut self, event: &GameEvents) -> mlua::Result<()> {
@@ -123,10 +174,17 @@ impl Scripting {
                 payload.set("dir", *dir)?;
                 Self::fire_listeners(&self.lua, &mut self.scheduler, "player_aim", &payload)?;
             }
+            GameEvents::TankSelect { id, tank_id } => {
+                let payload = self.lua.create_table()?;
+                payload.set("id", *id)?;
+                payload.set("tankId", *tank_id)?;
+                Self::fire_listeners(&self.lua, &mut self.scheduler, "tank_select", &payload)?;
+            }
             GameEvents::TankTree { .. } => {
                 let payload = self.lua.create_table()?;
                 Self::fire_listeners(&self.lua, &mut self.scheduler, "tank_tree", &payload)?;
             }
+            _ => {}
         }
         Ok(())
     }
