@@ -2,6 +2,7 @@ server/server_key.bin
 client/public_key.bin
 
 target/
+/target
 
 .env
 
