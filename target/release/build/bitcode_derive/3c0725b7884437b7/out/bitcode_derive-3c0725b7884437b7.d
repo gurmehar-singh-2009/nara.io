@@ -1,0 +1,10 @@
+/home/user/q/nara.io/target/release/build/bitcode_derive/3c0725b7884437b7/out/bitcode_derive-3c0725b7884437b7.d: /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/lib.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/attribute.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/bound.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/decode.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/encode.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/shared.rs
+
+/home/user/q/nara.io/target/release/build/bitcode_derive/3c0725b7884437b7/out/libbitcode_derive-3c0725b7884437b7.so: /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/lib.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/attribute.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/bound.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/decode.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/encode.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/shared.rs
+
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/lib.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/attribute.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/bound.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/decode.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/encode.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitcode_derive-0.6.9/src/shared.rs:

@@ -1160,36 +1160,38 @@ impl Renderer {
             let fg_w = inner_w * health_percent;
             let inner_left = s.render_pos.x - bar_w * 0.5 + inset;
 
-            instances.push(RenderEntity {
-                instance: EntityInstance {
-                    position: [s.render_pos.x, bar_y],
-                    size: [bar_w, bar_h],
-                    rotation: 0.0,
-                    shape_type: 4,
-                    sides: 4,
-                    fill_color: DARK_THEME.health_bar_background,
-                    border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_background),
-                    border_thickness: 10.,
-                    extra_param: 1.0, // full pill
-                },
-                text: None,
-            });
-
-            if fg_w > 0.1 {
+            if s.render_health < s.max_health as f32 {
                 instances.push(RenderEntity {
                     instance: EntityInstance {
-                        position: [inner_left + fg_w * 0.5, bar_y],
-                        size: [fg_w, fg_h],
+                        position: [s.render_pos.x, bar_y],
+                        size: [bar_w, bar_h],
                         rotation: 0.0,
                         shape_type: 4,
                         sides: 4,
-                        fill_color: DARK_THEME.health_bar_foreground,
-                        border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_foreground),
-                        border_thickness: HEALTH_BAR_BORDER,
-                        extra_param: 1.0,
+                        fill_color: DARK_THEME.health_bar_background,
+                        border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_background),
+                        border_thickness: 10.,
+                        extra_param: 1.0, // full pill
                     },
                     text: None,
                 });
+
+                if fg_w > 0.1 {
+                    instances.push(RenderEntity {
+                        instance: EntityInstance {
+                            position: [inner_left + fg_w * 0.5, bar_y],
+                            size: [fg_w, fg_h],
+                            rotation: 0.0,
+                            shape_type: 4,
+                            sides: 4,
+                            fill_color: DARK_THEME.health_bar_foreground,
+                            border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_foreground),
+                            border_thickness: HEALTH_BAR_BORDER,
+                            extra_param: 1.0,
+                        },
+                        text: None,
+                    });
+                }
             }
         }
 

@@ -1,0 +1,37 @@
+cargo:rerun-if-changed=build
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+exit status: 0
+cargo:rustc-link-search=native=/home/user/q/nara.io/target/debug/build/mlua-sys/465662d0b3e4fd70/out/lib
+cargo:rustc-link-lib=static:-bundle=lua5.5
+cargo:include=/home/user/q/nara.io/target/debug/build/mlua-sys/465662d0b3e4fd70/out/include
+cargo:lib=/home/user/q/nara.io/target/debug/build/mlua-sys/465662d0b3e4fd70/out/lib

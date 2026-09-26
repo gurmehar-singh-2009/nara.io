@@ -1,0 +1,15 @@
+/home/user/q/nara.io/target/release/build/thiserror/dd82ba78eec60e67/out/thiserror-dd82ba78eec60e67.d: /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/lib.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/aserror.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/display.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/provide.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/var.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/private.rs /home/user/q/nara.io/target/release/build/thiserror/5783e147a3a50d50/out/private.rs
+
+/home/user/q/nara.io/target/release/build/thiserror/dd82ba78eec60e67/out/libthiserror-dd82ba78eec60e67.rlib: /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/lib.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/aserror.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/display.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/provide.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/var.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/private.rs /home/user/q/nara.io/target/release/build/thiserror/5783e147a3a50d50/out/private.rs
+
+/home/user/q/nara.io/target/release/build/thiserror/dd82ba78eec60e67/out/libthiserror-dd82ba78eec60e67.rmeta: /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/lib.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/aserror.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/display.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/provide.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/var.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/private.rs /home/user/q/nara.io/target/release/build/thiserror/5783e147a3a50d50/out/private.rs
+
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/lib.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/aserror.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/display.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/provide.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/var.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.19/src/private.rs:
+/home/user/q/nara.io/target/release/build/thiserror/5783e147a3a50d50/out/private.rs:
+
+# env-dep:OUT_DIR=/home/user/q/nara.io/target/release/build/thiserror/5783e147a3a50d50/out

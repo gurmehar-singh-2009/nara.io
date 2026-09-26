@@ -1,0 +1,9 @@
+/home/user/q/nara.io/target/wasm32-unknown-unknown/release/build/linebender_resource_handle/c105ec9844a54478/out/linebender_resource_handle-c105ec9844a54478.d: /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/lib.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/blob.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/font.rs
+
+/home/user/q/nara.io/target/wasm32-unknown-unknown/release/build/linebender_resource_handle/c105ec9844a54478/out/liblinebender_resource_handle-c105ec9844a54478.rlib: /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/lib.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/blob.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/font.rs
+
+/home/user/q/nara.io/target/wasm32-unknown-unknown/release/build/linebender_resource_handle/c105ec9844a54478/out/liblinebender_resource_handle-c105ec9844a54478.rmeta: /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/lib.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/blob.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/font.rs
+
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/lib.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/blob.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linebender_resource_handle-0.1.1/src/font.rs:

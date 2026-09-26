@@ -35,7 +35,7 @@ const TEAM_PURPLE: Color = [0.945, 0.467, 0.867, 1.0]; // #F177DD
 const TEAM_GREEN: Color = [0.0, 0.882, 0.431, 1.0]; // #00E16E
 
 const HEALTH_BG: Color = [0.149, 0.149, 0.149, 1.0]; // #262626
-const HEALTH_FG: Color = [0.522, 0.890, 0.490, 1.0]; // #85E37D
+const HEALTH_FG: Color = [142. / 255., 204. / 255., 81. / 255., 1.0]; //[0.522, 0.890, 0.490, 1.0]; // #85E37D
 
 const XP_FILL: Color = [1.0, 0.871, 0.263, 1.0]; // #FFDE43
 

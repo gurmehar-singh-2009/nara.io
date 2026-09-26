@@ -79,7 +79,7 @@ impl Shapes {
         let slot = self.ids.len();
         self.ids.push(id);
         self.kinds.push(kind);
-        self.rotations.push(0.0);
+        self.rotations.push(1.0);
         self.rotation_speeds.push(rotation_speed);
         self.xp_rewards.push(xp_reward);
         self.centers.push(center);

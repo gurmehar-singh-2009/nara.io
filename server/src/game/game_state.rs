@@ -166,8 +166,7 @@ impl GameState {
             }
 
             self.rebuild_spatial_hash();
-            self.simulate_bullets(dt);
-            self.fire_auto_weapons(dt);
+            self.simulate_combat(dt);
 
             self.scripting.scheduler.on_tick();
             self.tick_shape_spawns();
@@ -843,9 +842,10 @@ impl GameState {
         }
     }
 
-    fn simulate_bullets(&mut self, dt: f32) {
+    fn simulate_combat(&mut self, dt: f32) {
         let sub_dt = dt / BULLET_SUBSTEPS as f32;
         for _ in 0..BULLET_SUBSTEPS {
+            self.fire_auto_weapons(sub_dt);
             self.scripting.entities_mut().bullets.tick(sub_dt);
             self.resolve_bullet_collisions();
         }
@@ -1117,8 +1117,16 @@ impl GameState {
             let reload_time = *t.reload_time;
 
             for (i, barrel) in t.tank_type.barrels.iter().enumerate() {
+                let cycle = (reload_time * barrel.reload).max(0.05);
+                let phase = (cycle * barrel.delay).max(0.0);
+
                 while t.barrel_timers.len() <= i {
-                    t.barrel_timers.push(0.0);
+                    t.barrel_timers.push(phase);
+                }
+
+                if !auto_fire {
+                    t.barrel_timers[i] = phase;
+                    continue;
                 }
 
                 let timer = &mut t.barrel_timers[i];
@@ -1126,13 +1134,6 @@ impl GameState {
                 if *timer > 0.0 {
                     continue;
                 }
-
-                if !auto_fire {
-                    *timer = 0.0;
-                    continue;
-                }
-
-                let cycle = (reload_time * barrel.reload).max(0.05);
                 *timer += cycle;
 
                 let barrel_angle = barrel.angle.to_radians();

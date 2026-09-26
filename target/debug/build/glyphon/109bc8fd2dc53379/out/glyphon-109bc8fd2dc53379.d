@@ -1,0 +1,12 @@
+/home/user/q/nara.io/target/debug/build/glyphon/109bc8fd2dc53379/out/glyphon-109bc8fd2dc53379.d: /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/lib.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/cache.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/custom_glyph.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/error.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/text_atlas.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/text_render.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/viewport.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/shader.wgsl
+
+/home/user/q/nara.io/target/debug/build/glyphon/109bc8fd2dc53379/out/libglyphon-109bc8fd2dc53379.rmeta: /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/lib.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/cache.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/custom_glyph.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/error.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/text_atlas.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/text_render.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/viewport.rs /home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/shader.wgsl
+
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/lib.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/cache.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/custom_glyph.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/error.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/text_atlas.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/text_render.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/viewport.rs:
+/home/user/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.12.0/src/shader.wgsl:

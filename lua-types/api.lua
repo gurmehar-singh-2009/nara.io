@@ -1,7 +1,29 @@
 ---@meta
 
 ---@class PlayerSpawnEvent
+---@field id number
 ---@field name string
+
+---@class PlayerDisconnectEvent
+---@field id number
+
+---@class PlayerMoveEvent
+---@field id number
+---@field dir number
+
+---@class PlayerAutofireEvent
+---@field id number
+---@field enabled boolean
+
+---@class PlayerAimEvent
+---@field id number
+---@field dir number
+
+---@class TankSelectEvent
+---@field id number
+---@field tankId number
+
+---@class TankTreeEvent
 
 ---@class Events
 events = {}
@@ -9,6 +31,11 @@ events = {}
 ---@param event "player_spawn"
 ---@param handler fun(event: PlayerSpawnEvent)
 ---@overload fun(event: string, handler: fun(event: table))
+
+---@param event "player_disconnect"
+---@param handler fun(event: PlayerDisconnectEvent)
+---@overload fun(event: string, handler: fun(event: table))
+
 function events.on(event, handler) end
 
 ---@class Commands
