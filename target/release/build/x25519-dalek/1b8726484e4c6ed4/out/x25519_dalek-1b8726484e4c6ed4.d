@@ -1,9 +1,0 @@
-/home/user/q/nara.io/target/release/build/x25519-dalek/1b8726484e4c6ed4/out/x25519_dalek-1b8726484e4c6ed4.d: /home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/lib.rs /home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/x25519.rs /home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/../README.md
-
-/home/user/q/nara.io/target/release/build/x25519-dalek/1b8726484e4c6ed4/out/libx25519_dalek-1b8726484e4c6ed4.rlib: /home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/lib.rs /home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/x25519.rs /home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/../README.md
-
-/home/user/q/nara.io/target/release/build/x25519-dalek/1b8726484e4c6ed4/out/libx25519_dalek-1b8726484e4c6ed4.rmeta: /home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/lib.rs /home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/x25519.rs /home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/../README.md
-
-/home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/lib.rs:
-/home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/x25519.rs:
-/home/user/.var/app/com.vscodium.codium/data/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/x25519-dalek-3.0.0/src/../README.md:
