@@ -1,6 +1,4 @@
-#![allow(internal_features)]
-
-use std::{marker::ConstParamTy_, time::UNIX_EPOCH};
+use std::{marker::PhantomData, time::UNIX_EPOCH};
 
 use chacha20poly1305::{Key, KeyInit, Nonce, aead::Aead};
 use ed25519_dalek::Signer;
@@ -19,16 +17,25 @@ use crate::errors::{
     HKDFExpansionFailureSnafu, ServerError, SystemTimeSnafu,
 };
 
-#[derive(PartialEq, Eq)]
-pub enum ConnectionState {
-    Handshaking,
-    Authenticated,
+mod sealed {
+    pub trait Sealed {}
 }
 
-impl ConstParamTy_ for ConnectionState {}
+pub trait ConnectionState: sealed::Sealed {}
 
 #[derive(Debug)]
-pub struct ClientConnection<const S: ConnectionState> {
+pub struct Handshaking;
+
+#[derive(Debug)]
+pub struct Authenticated;
+
+impl sealed::Sealed for Handshaking {}
+impl sealed::Sealed for Authenticated {}
+impl ConnectionState for Handshaking {}
+impl ConnectionState for Authenticated {}
+
+#[derive(Debug)]
+pub struct ClientConnection<S: ConnectionState> {
     send_tx: UnboundedSender<Vec<u8>>,
 
     send_nonce_count: u32,
@@ -38,9 +45,11 @@ pub struct ClientConnection<const S: ConnectionState> {
     recv_cipher: Option<chacha20poly1305::ChaCha20Poly1305>,
 
     id: u32,
+
+    _state: PhantomData<S>,
 }
 
-impl ClientConnection<{ ConnectionState::Handshaking }> {
+impl ClientConnection<Handshaking> {
     pub fn new(id: u32, send_tx: UnboundedSender<Vec<u8>>) -> Self {
         Self {
             send_tx,
@@ -52,6 +61,8 @@ impl ClientConnection<{ ConnectionState::Handshaking }> {
             recv_cipher: None,
 
             id,
+
+            _state: PhantomData,
         }
     }
 
@@ -59,7 +70,7 @@ impl ClientConnection<{ ConnectionState::Handshaking }> {
         mut self,
         their_public: &PublicKey,
         server_identity_key: &ed25519_dalek::SigningKey,
-    ) -> Result<ClientConnection<{ ConnectionState::Authenticated }>, ServerError> {
+    ) -> Result<ClientConnection<Authenticated>, ServerError> {
         let mut rng = UnwrapErr(SysRng);
 
         let my_secret = EphemeralSecret::random_from_rng(&mut rng);
@@ -77,8 +88,9 @@ impl ClientConnection<{ ConnectionState::Handshaking }> {
         let mut client_to_server = [0u8; 32];
         let mut server_to_client = [0u8; 32];
 
-        // TODO: change the "client-to-server"/"server-to-client" to be randomly
-        // generated per session/restart.
+        // TODO: consider adding a random salt (or a handshake transcript hash)
+        // so derived keys are bound to this specific handshake. The fixed
+        // "client-to-server"/"server-to-client" info labels are fine as-is.
         hkdf.expand(b"client-to-server", &mut client_to_server)
             .context(HKDFExpansionFailureSnafu)?;
 
@@ -125,6 +137,8 @@ impl ClientConnection<{ ConnectionState::Handshaking }> {
             recv_cipher: self.recv_cipher,
 
             id: self.id,
+
+            _state: PhantomData,
         })
     }
 
@@ -137,7 +151,7 @@ impl ClientConnection<{ ConnectionState::Handshaking }> {
     }
 }
 
-impl ClientConnection<{ ConnectionState::Authenticated }> {
+impl ClientConnection<Authenticated> {
     fn nonce(nonce_counter: u32) -> Nonce {
         let mut bytes = [0u8; 12];
 
@@ -147,11 +161,10 @@ impl ClientConnection<{ ConnectionState::Authenticated }> {
     }
 
     pub fn send<P: Packet>(&mut self, packet: P) -> Result<(), ServerError> {
-        let cipher = match &mut self.send_cipher {
-            Some(cipher) => cipher,
-
-            None => do yeet ServerError::CipherNotInitialized,
-        };
+        let cipher = self
+            .send_cipher
+            .as_ref()
+            .ok_or(ServerError::CipherNotInitialized)?;
 
         let encoded = cipher
             .encrypt(
@@ -170,11 +183,10 @@ impl ClientConnection<{ ConnectionState::Authenticated }> {
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, ServerError> {
-        let cipher = match &mut self.recv_cipher {
-            Some(cipher) => cipher,
-
-            None => do yeet ServerError::CipherNotInitialized,
-        };
+        let cipher = self
+            .recv_cipher
+            .as_ref()
+            .ok_or(ServerError::CipherNotInitialized)?;
 
         let decoded = cipher
             .decrypt(&Self::nonce(self.recv_nonce_count), ciphertext)

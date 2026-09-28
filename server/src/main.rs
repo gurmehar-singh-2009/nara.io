@@ -1,9 +1,8 @@
-#![feature(yeet_expr)]
-#![feature(adt_const_params)]
-#![feature(const_param_ty_trait)]
-#![feature(stmt_expr_attributes)]
-#![allow(incomplete_features)]
-#![allow(clippy::module_inception)] // I don't think it's a big deal.
+// #![feature(adt_const_params)]
+// #![feature(const_param_ty_trait)]
+// #![feature(stmt_expr_attributes)]
+// #![allow(incomplete_features)]
+// #![allow(clippy::module_inception)] // I don't think it's a big deal.
 
 use std::sync::Arc;
 

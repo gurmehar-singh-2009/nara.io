@@ -127,7 +127,7 @@ impl Entities {
     }
 
     pub fn iter<'b>(&'b self) -> impl ParallelIterator<Item = EntityRef<'b>> {
-        #[rustfmt::skip]
+        // #[rustfmt::skip]
         (&self.generations, &self.alive, &self.positions, &self.velocities, &self.health)
             .into_par_iter()
             .enumerate()
@@ -137,7 +137,7 @@ impl Entities {
     }
 
     pub fn iter_alive<'b>(&'b self) -> impl ParallelIterator<Item = EntityRef<'b>> {
-        #[rustfmt::skip]
+        // #[rustfmt::skip]
         (&self.generations, &self.alive, &self.positions, &self.velocities, &self.health)
             .into_par_iter()
             .enumerate()
@@ -169,7 +169,7 @@ impl Entities {
     }
 
     pub fn iter_alive_mut<'b>(&'b mut self) -> impl ParallelIterator<Item = EntityMut<'b>> {
-        #[rustfmt::skip]
+        // #[rustfmt::skip]
         (
             &mut self.generations,
             &mut self.alive,

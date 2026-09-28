@@ -6,12 +6,12 @@ use shared::packets::Packet;
 
 use crate::{
     errors::ServerError,
-    net::{ClientConnection, ConnectionState},
+    net::{Authenticated, ClientConnection},
 };
 
 #[derive(Clone)]
 pub struct Connections {
-    inner: Arc<DashMap<u32, ClientConnection<{ ConnectionState::Authenticated }>>>,
+    inner: Arc<DashMap<u32, ClientConnection<Authenticated>>>,
 }
 
 impl Connections {
@@ -21,7 +21,7 @@ impl Connections {
         }
     }
 
-    pub fn insert(&self, id: u32, conn: ClientConnection<{ ConnectionState::Authenticated }>) {
+    pub fn insert(&self, id: u32, conn: ClientConnection<Authenticated>) {
         self.inner.insert(id, conn);
     }
 
@@ -29,17 +29,17 @@ impl Connections {
         self.inner.remove(&id);
     }
 
-//     pub fn contains(&self, id: u32) -> bool {
-//         self.inner.contains_key(&id)
-//     }
-// 
-//     pub fn len(&self) -> usize {
-//         self.inner.len()
-//     }
-// 
-//     pub fn is_empty(&self) -> bool {
-//         self.inner.is_empty()
-//     }
+    //     pub fn contains(&self, id: u32) -> bool {
+    //         self.inner.contains_key(&id)
+    //     }
+    //
+    //     pub fn len(&self) -> usize {
+    //         self.inner.len()
+    //     }
+    //
+    //     pub fn is_empty(&self) -> bool {
+    //         self.inner.is_empty()
+    //     }
 
     pub fn decrypt(&self, id: u32, ciphertext: &[u8]) -> Option<Result<Vec<u8>, ServerError>> {
         self.inner
