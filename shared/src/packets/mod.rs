@@ -153,11 +153,11 @@ pub trait Packet: Send + Sync + Sized + Encode + for<'de> Decode<'de> {
 
     fn decode(data: &[u8]) -> Result<Self, SharedError> {
         if data.is_empty() {
-            do yeet InvalidByteSizeSnafu.build();
+            return Err(InvalidByteSizeSnafu.build());
         }
 
         if data[0] != Self::ID {
-            do yeet InvalidByteSizeSnafu.build(); // TODO: InvalidPacketId
+            return Err(InvalidByteSizeSnafu.build()); // TODO: InvalidPacketId
         }
 
         bitcode::decode(&data[1..]).context(DecodeSnafu)
