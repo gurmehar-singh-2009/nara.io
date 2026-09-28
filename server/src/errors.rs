@@ -19,7 +19,7 @@ pub enum ServerError {
     HandshakeFailure,
 
     #[snafu(display("Error converting slice to chacha20poly1305 key type: {source}"))]
-    ConvertingSliceToKeyTypeError { source: ! },
+    ConvertingSliceToKeyTypeError { source: std::convert::Infallible },
 
     #[snafu(display("HKDF Expansion failure during handshake exchange"))]
     HKDFExpansionFailure { source: hkdf::InvalidLength },
