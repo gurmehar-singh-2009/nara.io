@@ -11,6 +11,7 @@ use crate::{
     scripting::loader::{TankDef, WeaponDef, load_tank, load_weapon},
 };
 
+#[allow(dead_code)]
 #[derive(Default)]
 pub struct WeaponRegistry(std::collections::HashMap<String, WeaponDef>);
 

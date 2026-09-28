@@ -82,6 +82,7 @@ pub mod aimbot_anti {
     }
 
     /// Kurtosis evaluation.
+    #[allow(dead_code)]
     pub fn residual_kurtosis(actual_angles: &[f32], expected_angles: &[f32]) -> f32 {
         if actual_angles.is_empty() || actual_angles.len() != expected_angles.len() {
             return 0.0;
@@ -123,8 +124,6 @@ pub mod upgrade_anti {
         current_ms: u64,
         min_interval_ms: u64,
     ) -> bool {
-        // clock skew (current < last) counts as zero elapsed instead of
-        // permanently rejecting the player
         current_ms.saturating_sub(last_upgrade_ms) >= min_interval_ms
     }
 
@@ -141,8 +140,6 @@ pub mod multibox_anti {
         angles_b: &[f32],
         threshold_rad: f32,
     ) -> f32 {
-        // compare the overlapping tails so streams of different lengths
-        // (different connect times) can still be matched
         if angles_a.len() < 2 || angles_b.len() < 2 {
             return 0.0;
         }
@@ -233,6 +230,7 @@ impl AimSamples {
         self.samples.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }

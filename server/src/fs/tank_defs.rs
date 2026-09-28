@@ -1,4 +1,5 @@
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Tank {
     pub id: u32,
     pub name: String,
@@ -18,6 +19,7 @@ pub struct Tank {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TankFlags {
     pub invisibility: bool,
     pub zoom_ability: bool,
@@ -26,12 +28,14 @@ pub struct TankFlags {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Stat {
     pub name: String,
     pub max: u32,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Barrel {
     pub x: f32,
     pub y: f32,
@@ -49,6 +53,7 @@ pub struct Barrel {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Bullet {
     pub bullet_type: String,
     pub health: f32,

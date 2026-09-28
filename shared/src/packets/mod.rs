@@ -3,11 +3,17 @@ use bytes::{BufMut, Bytes, BytesMut};
 use snafu::ResultExt;
 
 use crate::{
-    errors::{DecodeSnafu, InvalidByteSizeSnafu, SharedError}, packets::{
+    errors::{DecodeSnafu, InvalidByteSizeSnafu, SharedError},
+    packets::{
         client_bound::{
             AddEntityPacket, BarrelDef, LeaderboardPacket, PlayerStatsPacket, RemoveEntityPacket,
             UpdateEntityPacket,
-        }, handshake::HandshakePacket, server_bound::{AimPacket, AutoFirePacket, ChatMessagePacket, ChatSendPacket, MovementPacket, SpawnReqPacket},
+        },
+        handshake::HandshakePacket,
+        server_bound::{
+            AimPacket, AutoFirePacket, ChatMessagePacket, ChatSendPacket, MovementPacket,
+            SpawnReqPacket,
+        },
     },
 };
 
@@ -179,6 +185,20 @@ pub struct TankOption {
     pub barrels: Vec<BarrelDef>,
 }
 
+junk_packet! {
+    pub struct StatUpgradePacket {
+        /// 0-7 index into the stat list (same order as the panel rows)
+        pub stat: u8,
+    }
+}
+
+junk_packet! {
+    pub struct PlayerUpgradesPacket {
+        pub levels: [u8; 8],
+        pub points: u32,
+    }
+}
+
 register_packets! {
     (0, HandshakePacket),
     (1, SpawnReqPacket),
@@ -194,4 +214,6 @@ register_packets! {
     (11, TankSelectPacket),
     (12, ChatSendPacket),
     (13, ChatMessagePacket),
+    (14, StatUpgradePacket),
+    (15, PlayerUpgradesPacket),
 }

@@ -25,25 +25,25 @@ pub fn darken(color: Color, factor: f32) -> Color {
     ]
 }
 
-const TANK_BODY: Color = [0.0, 0.698, 0.882, 1.0]; // #00B2E1
-const TANK_OUTLINE: Color = [0.0, 0.520, 0.657, 1.0]; // #0085A8 (fill x 0.75)
-const BARREL_FILL: Color = [0.600, 0.600, 0.600, 1.0]; // #999999
-const BARREL_EDGE: Color = [0.447, 0.447, 0.447, 1.0]; // #727272 (fill x 0.75)
+const TANK_BODY: Color = [0.0, 0.698, 0.882, 1.0];
+const TANK_OUTLINE: Color = [0.0, 0.520, 0.657, 1.0];
+const BARREL_FILL: Color = [0.600, 0.600, 0.600, 1.0];
+const BARREL_EDGE: Color = [0.447, 0.447, 0.447, 1.0];
 
-const TEAM_RED: Color = [0.988, 0.463, 0.467, 1.0]; // #FC7677
-const TEAM_PURPLE: Color = [0.945, 0.467, 0.867, 1.0]; // #F177DD
-const TEAM_GREEN: Color = [0.0, 0.882, 0.431, 1.0]; // #00E16E
+const TEAM_RED: Color = [0.945, 0.306, 0.329, 1.0];
+const TEAM_PURPLE: Color = [0.945, 0.467, 0.867, 1.0];
+const TEAM_GREEN: Color = [0.0, 0.882, 0.431, 1.0];
 
-const HEALTH_BG: Color = [0.149, 0.149, 0.149, 1.0]; // #262626
-const HEALTH_FG: Color = [142. / 255., 204. / 255., 81. / 255., 1.0]; //[0.522, 0.890, 0.490, 1.0]; // #85E37D
+const HEALTH_BG: Color = [0.149, 0.149, 0.149, 1.0];
+const HEALTH_FG: Color = [0.557, 1.0, 0.376, 1.0];
 
-const XP_FILL: Color = [1.0, 0.871, 0.263, 1.0]; // #FFDE43
+const XP_FILL: Color = [1.0, 0.871, 0.263, 1.0];
 
-const SQUARE: Color = [1.0, 0.910, 0.412, 1.0]; // #FFE869
-const PENTAGON: Color = [0.463, 0.553, 1.0, 1.0]; // #768DFF
-const FALLEN: Color = [0.549, 0.549, 0.549, 1.0]; // #8C8C8C
+const SQUARE: Color = [1.0, 0.910, 0.412, 1.0];
+const TRIANGLE: Color = [0.988, 0.463, 0.467, 1.0];
+const PENTAGON: Color = [0.463, 0.553, 1.0, 1.0];
+const FALLEN: Color = [0.549, 0.549, 0.549, 1.0];
 
-// stat upgrade panel colours (one distinct hue per stat)
 const STAT_REGEN: Color = [0.945, 0.467, 0.867, 1.0]; // pink
 const STAT_MAX_HEALTH: Color = [0.580, 0.360, 0.910, 1.0]; // purple
 const STAT_BODY: Color = [0.988, 0.463, 0.467, 1.0]; // red
@@ -122,14 +122,14 @@ impl DiepTheme {
 
     pub const fn dark() -> Self {
         Self {
-            background: [0.020, 0.020, 0.020, 1.0], // #050505
+            background: [0.020, 0.020, 0.020, 1.0],
             border: [0.0, 0.0, 0.0, 1.0],
             border_alpha: 0.35,
-            fill_borders: false,              // flat black outlines in dark mode
+            fill_borders: false,
             grid: [0.078, 0.078, 0.078, 1.0], // #141414
             grid_alpha: 1.0,
             maze_walls: [0.078, 0.078, 0.078, 1.0],
-            map_outside: [0.157, 0.157, 0.157, 0.25], // #282828 grey
+            map_outside: [0.157, 0.157, 0.157, 0.25], // #282828
             minimap_border: [0.078, 0.078, 0.078, 1.0],
             minimap_background: [0.157, 0.157, 0.157, 1.0],
 
@@ -155,7 +155,7 @@ impl DiepTheme {
             xp_bar_fill: XP_FILL,
             score_bar_fill: TEAM_GREEN,
             square: SQUARE,
-            triangle: TEAM_RED,
+            triangle: TRIANGLE,
             pentagon: PENTAGON,
             crashers: TEAM_PURPLE,
             arena_closer: SQUARE,
@@ -177,11 +177,11 @@ impl DiepTheme {
             background: [0.804, 0.804, 0.804, 1.0], // #CDCDCD
             border: [0.0, 0.0, 0.0, 1.0],
             border_alpha: 0.10,
-            fill_borders: true,               // every outline = fill darkened ~75%
-            grid: [0.722, 0.722, 0.722, 1.0], // #B8B8B8 (baked, subtle)
+            fill_borders: true,
+            grid: [0.722, 0.722, 0.722, 1.0], // #B8B8B8
             grid_alpha: 1.0,
             maze_walls: [0.733, 0.733, 0.733, 1.0],
-            map_outside: [0.647, 0.647, 0.647, 0.25], // #A5A5A5 grey
+            map_outside: [0.647, 0.647, 0.647, 0.25], // #A5A5A5
             minimap_background: [0.804, 0.804, 0.804, 0.90],
             minimap_border: [0.733, 0.733, 0.733, 1.0],
 
@@ -207,7 +207,7 @@ impl DiepTheme {
             xp_bar_fill: XP_FILL,
             score_bar_fill: TEAM_GREEN,
             square: SQUARE,
-            triangle: TEAM_RED,
+            triangle: TRIANGLE,
             pentagon: PENTAGON,
             crashers: TEAM_PURPLE,
             arena_closer: SQUARE,

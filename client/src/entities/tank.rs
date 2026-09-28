@@ -10,6 +10,8 @@ use crate::{
 
 const FADE_IN: f32 = 0.25;
 const FADE_OUT: f32 = 0.30;
+const RECOIL_KICK_FRAC: f32 = 0.18;
+const RECOIL_TIME: f32 = 0.12;
 
 pub struct Tank {
     pub id: u32,
@@ -31,11 +33,13 @@ pub struct Tank {
     pub max_health: u32,
 
     pub render_health: f32,
+    pub health_bar_alpha: f32,
 
     pub dying: bool,
     pub render_alpha: f32,
 
     pub barrels: Vec<BarrelDef>,
+    pub barrel_recoils: Vec<f32>,
 }
 
 impl Tank {
@@ -60,11 +64,13 @@ impl Tank {
             max_health: 100,
 
             render_health: 100.0,
+            health_bar_alpha: 0.0,
 
             dying: false,
             render_alpha: 0.0,
 
             barrels: vec![],
+            barrel_recoils: vec![],
         }
     }
 
@@ -74,6 +80,17 @@ impl Tank {
         } else {
             self.render_alpha = (self.render_alpha + dt / FADE_IN).min(1.0);
         }
+
+        self.barrel_recoils.resize(self.barrels.len(), 0.0);
+        for r in self.barrel_recoils.iter_mut() {
+            *r = (*r - dt / RECOIL_TIME).max(0.0);
+        }
+    }
+
+    pub fn kick_barrel(&mut self, idx: usize) {
+        if idx < self.barrel_recoils.len() {
+            self.barrel_recoils[idx] = 1.0;
+        }
     }
 }
 
@@ -81,10 +98,13 @@ impl Entity for Tank {
     fn get_render_instances(&self) -> Vec<EntityInstance> {
         let mut instances = Vec::new();
 
-        for barrel in &self.barrels {
+        for (i, barrel) in self.barrels.iter().enumerate() {
             let barrel_angle = barrel.angle.to_radians();
 
             let world_angle = self.render_rot + barrel_angle;
+
+            let recoil = self.barrel_recoils.get(i).copied().unwrap_or(0.0);
+            let kick = recoil * barrel.length * self.scale * RECOIL_KICK_FRAC;
 
             let local_base = glam::Vec2::new(barrel.x * self.scale, barrel.y * self.scale);
 
@@ -95,24 +115,18 @@ impl Entity for Tank {
             let center_offset =
                 glam::Vec2::from_angle(world_angle) * (barrel.length * self.scale * 0.5);
 
-            let world_pos = base_pos + center_offset;
+            let back = glam::Vec2::from_angle(world_angle) * kick;
+            let world_pos = base_pos + center_offset - back;
 
             instances.push(EntityInstance {
                 position: [world_pos.x, world_pos.y],
-
                 size: [barrel.length * self.scale, barrel.width * self.scale],
-
                 rotation: world_angle,
-
                 shape_type: 1,
                 sides: 4,
-
                 fill_color: with_alpha(DARK_THEME.barrel, self.render_alpha),
-
                 border_color: with_alpha(DARK_THEME.barrel_outline, self.render_alpha),
-
                 border_thickness: 3.0 * self.scale,
-
                 extra_param: 1.0,
             });
         }
@@ -121,20 +135,13 @@ impl Entity for Tank {
 
         instances.push(EntityInstance {
             position: [self.render_pos.x, self.render_pos.y],
-
             size: [size, size],
-
             rotation: self.render_rot,
-
             shape_type: 0,
             sides: 0,
-
             fill_color: with_alpha(DARK_THEME.tank_body, self.render_alpha),
-
             border_color: with_alpha(DARK_THEME.tank_outline, self.render_alpha),
-
             border_thickness: 3.0 * self.scale,
-
             extra_param: 1.0,
         });
 

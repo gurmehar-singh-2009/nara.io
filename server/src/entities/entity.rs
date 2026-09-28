@@ -1,3 +1,5 @@
+#![allow(dead_code)] // figure this file out later
+
 use std::sync::Arc;
 
 use glam::Vec2;
@@ -20,6 +22,8 @@ pub struct Entities {
     pub velocities: Vec<Vec2>,
     pub health: Vec<u32>,
     pub free: Vec<usize>,
+
+    pub recoil_velocities: Vec<Vec2>,
 
     pub tanks: Tanks,
     pub bullets: Bullets,
@@ -49,6 +53,7 @@ impl Entities {
             velocities: vec![],
             health: vec![],
             free: vec![],
+            recoil_velocities: vec![],
             tanks: Tanks::new(256),
             bullets: Bullets::new(),
             shapes: Shapes::new(2048),
@@ -175,8 +180,13 @@ impl Entities {
             .into_par_iter()
             .enumerate()
             .filter(|(_, (_, alive, _, _, _))| **alive)
-            .map(|(index, (generation, alive, position, velocity, health))| {
-                EntityMut { index, generation, alive, position, velocity, health }
+            .map(|(index, (generation, alive, position, velocity, health))| EntityMut {
+                index,
+                generation,
+                alive,
+                position,
+                velocity,
+                health,
             })
     }
 
@@ -187,6 +197,7 @@ impl Entities {
             self.positions[index] = position;
             self.velocities[index] = velocity;
             self.health[index] = health;
+            self.recoil_velocities[index] = Vec2::ZERO;
 
             EntityId {
                 index,
@@ -199,6 +210,7 @@ impl Entities {
             self.positions.push(position);
             self.velocities.push(velocity);
             self.health.push(health);
+            self.recoil_velocities.push(Vec2::ZERO);
 
             EntityId {
                 index,
@@ -245,6 +257,7 @@ impl Entities {
     }
 }
 
+#[allow(dead_code)]
 pub struct EntityRef<'a> {
     pub index: usize,
     pub generation: &'a u32,
@@ -254,6 +267,7 @@ pub struct EntityRef<'a> {
     pub health: &'a u32,
 }
 
+#[allow(dead_code)]
 pub struct EntityMut<'a> {
     pub index: usize,
     pub generation: &'a mut u32,
@@ -263,6 +277,7 @@ pub struct EntityMut<'a> {
     pub health: &'a mut u32,
 }
 
+#[allow(dead_code)]
 pub fn spawn_entity(
     entities: &mut Entities,
     position: Vec2,

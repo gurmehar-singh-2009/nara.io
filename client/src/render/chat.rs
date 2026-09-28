@@ -1,3 +1,23 @@
+// so for chat:
+// im gonna make it so that theres a global and team chat
+// and chat messages ONLY show up in the chat log!! so no spamming
+// and use the `rustrict` crate for swear censoring and put rate limits to
+// chatting
+//
+// message layout (discord-ish header):
+//   [Blue] Name                       14:32
+//   message body, wrapped to the panel width
+// the team channel drops the tag (everyone there is on your team);
+// an empty sender is a system notice: dim, italic, no header.
+//
+// animations: messages slide in from the left, the panel fades in and
+// out, the input row grows open, the active-tab underline slides
+// between tabs, and a tab flashes when a message lands in the channel
+// you're not looking at.
+//
+// plus bubbles: each non-system message also floats above the sender's
+// tank for a few seconds (drawn by the renderer via `bubbles()`).
+
 use glam::Vec2;
 use glyphon::{
     Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds,
@@ -17,6 +37,14 @@ const LEFT: f32 = 20.0;
 const TOP: f32 = 96.0;
 const WIDTH: f32 = 360.0;
 const PAD: f32 = 12.0;
+
+const BUBBLE_LIFETIME_S: f64 = 4.0;
+const BUBBLE_FADE_S: f64 = 1.0;
+const BUBBLE_FONT: f32 = 16.0;
+const BUBBLE_LINE: f32 = 19.0;
+const BUBBLE_MAX_W: f32 = 200.0;
+const BUBBLE_MAX_CHARS: usize = 40;
+const BUBBLE_MAX_ACTIVE: usize = 12;
 
 const TAB_W: f32 = 110.0;
 const TAB_H: f32 = 28.0;
@@ -119,6 +147,7 @@ fn channel_index(channel: ChatChannel) -> usize {
     }
 }
 
+/// team id -> tag text + tag color
 fn team_tag(team: u8) -> (&'static str, [f32; 4]) {
     match team {
         0 => ("[Blue]", DARK_THEME.team_blue),
@@ -164,6 +193,13 @@ impl ChatMessage {
     }
 }
 
+pub struct ChatBubble {
+    pub sender: String,
+    pub body: Buffer,
+    pub lines: usize,
+    born_at: f64,
+}
+
 pub struct ChatPanel {
     global: Vec<ChatMessage>,
     team: Vec<ChatMessage>,
@@ -186,6 +222,8 @@ pub struct ChatPanel {
     tab_indicator: f32,
     /// per-tab "message arrived here while you were elsewhere" flash
     flash: [f32; 2],
+    /// world-space bubbles above tanks
+    bubbles: Vec<ChatBubble>,
 }
 
 impl ChatPanel {
@@ -207,6 +245,7 @@ impl ChatPanel {
             input_t: 0.0,
             tab_indicator: 0.0,
             flash: [0.0, 0.0],
+            bubbles: Vec::new(),
         }
     }
 
@@ -272,6 +311,7 @@ impl ChatPanel {
         msg
     }
 
+    /// server-echoed message: `sender` empty means a system notice
     pub fn receive(
         &mut self,
         fs: &mut glyphon::FontSystem,
@@ -339,6 +379,34 @@ impl ChatPanel {
         if channel != self.active {
             self.flash[channel_index(channel)] = 1.0;
         }
+
+        if !is_system {
+            self.bubbles.retain(|b| b.sender != sender);
+
+            let shown = if text.chars().count() > BUBBLE_MAX_CHARS {
+                let mut s: String = text.chars().take(BUBBLE_MAX_CHARS - 1).collect();
+                s.push('…');
+                s
+            } else {
+                text.to_string()
+            };
+
+            let mut bubble_body = Buffer::new(fs, Metrics::new(BUBBLE_FONT, BUBBLE_LINE));
+            bubble_body.set_size(Some(BUBBLE_MAX_W - 12.0), None);
+            bubble_body.set_text(&shown, &plain(), Shaping::Basic, None);
+            bubble_body.shape_until_scroll(fs, false);
+            let lines = bubble_body.layout_runs().count().max(1);
+
+            self.bubbles.push(ChatBubble {
+                sender: sender.to_string(),
+                body: bubble_body,
+                lines,
+                born_at: self.now,
+            });
+            while self.bubbles.len() > BUBBLE_MAX_ACTIVE {
+                self.bubbles.remove(0);
+            }
+        }
     }
 
     fn messages_for(&self, channel: ChatChannel) -> &Vec<ChatMessage> {
@@ -390,6 +458,27 @@ impl ChatPanel {
 
         for f in self.flash.iter_mut() {
             *f = (*f - dt * FLASH_DECAY).max(0.0);
+        }
+
+        self.bubbles
+            .retain(|b| self.now - b.born_at < BUBBLE_LIFETIME_S);
+    }
+
+    pub fn bubbles(&self) -> &[ChatBubble] {
+        &self.bubbles
+    }
+
+    pub fn bubble(&self, i: usize) -> Option<&ChatBubble> {
+        self.bubbles.get(i)
+    }
+
+    pub fn bubble_alpha(&self, i: usize) -> f32 {
+        match self.bubbles.get(i) {
+            Some(b) => {
+                let age = self.now - b.born_at;
+                (((BUBBLE_LIFETIME_S - age) / BUBBLE_FADE_S) as f32).clamp(0.0, 1.0)
+            }
+            None => 0.0,
         }
     }
 

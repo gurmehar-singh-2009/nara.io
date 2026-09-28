@@ -20,15 +20,19 @@ pub struct Tanks {
     levels: Vec<u32>,
     tank_types: Vec<Arc<Tank>>,
     max_healths: Vec<u32>,
-    bullet_damages: Vec<u32>,
-    bullet_speeds: Vec<f32>,
     reload_times: Vec<f32>,
     barrels: Vec<Vec<BarrelDef>>,
     barrel_timers: Vec<Vec<f32>>,
+    /// per-tank stat upgrade levels (index order matches the client's
+    /// upgrade panel rows)
+    stat_levels: Vec<[u8; 8]>,
+    /// unspent stat upgrade points
+    stat_points: Vec<u32>,
     upgrade_offered: Vec<Option<u32>>,
     sparse: Vec<Option<usize>>,
 }
 
+#[allow(dead_code)]
 pub struct TankRef<'a> {
     pub name: &'a str,
     pub xp: &'a Xp,
@@ -38,28 +42,28 @@ pub struct TankRef<'a> {
     pub level: &'a u32,
     pub tank_type: &'a Tank,
     pub max_health: &'a u32,
-    pub bullet_damage: &'a u32,
-    pub bullet_speed: &'a f32,
     pub reload_time: &'a f32,
     pub barrels: &'a Vec<BarrelDef>,
+    pub stat_levels: &'a [u8; 8],
+    pub stat_points: &'a u32,
 }
 
+#[allow(dead_code)]
 pub struct TankMut<'a> {
     pub name: &'a mut String,
     pub xp: &'a mut Xp,
     pub aim: &'a mut f32,
     pub move_dir: &'a mut Option<f32>,
     pub auto_fire: &'a mut bool,
-    // pub reload_timer: &'a mut f32,
     pub level: &'a mut u32,
     // we dont need tank type as mutable EVER
     pub tank_type: &'a Tank,
     pub max_health: &'a mut u32,
-    pub bullet_damage: &'a mut u32,
-    pub bullet_speed: &'a mut f32,
     pub reload_time: &'a mut f32,
     pub barrels: &'a mut Vec<BarrelDef>,
     pub barrel_timers: &'a mut Vec<f32>,
+    pub stat_levels: &'a mut [u8; 8],
+    pub stat_points: &'a mut u32,
 }
 
 fn initial_timers(reload_time: f32, def: &Tank) -> Vec<f32> {
@@ -81,11 +85,11 @@ impl Tanks {
             levels: Vec::with_capacity(max_tanks),
             tank_types: Vec::with_capacity(max_tanks),
             max_healths: Vec::with_capacity(max_tanks),
-            bullet_damages: Vec::with_capacity(max_tanks),
-            bullet_speeds: Vec::with_capacity(max_tanks),
             reload_times: Vec::with_capacity(max_tanks),
             barrels: Vec::with_capacity(max_tanks),
             barrel_timers: Vec::with_capacity(max_tanks),
+            stat_levels: Vec::with_capacity(max_tanks),
+            stat_points: Vec::with_capacity(max_tanks),
             upgrade_offered: Vec::with_capacity(max_tanks),
             sparse: Vec::with_capacity(max_tanks),
         }
@@ -117,12 +121,12 @@ impl Tanks {
         self.auto_fire.push(false);
         self.levels.push(1);
         self.max_healths.push(basic_tank.max_health);
-        self.bullet_damages.push(2);
-        self.bullet_speeds.push(100.0);
         self.reload_times.push(0.5);
         self.tank_types.push(Arc::new(basic_tank));
         self.barrels.push(basic_barrels);
         self.barrel_timers.push(timers);
+        self.stat_levels.push([0; 8]);
+        self.stat_points.push(0);
         self.upgrade_offered.push(None);
 
         self.sparse[id.index] = Some(slot);
@@ -148,11 +152,11 @@ impl Tanks {
         self.levels.swap(slot, last);
         self.tank_types.swap(slot, last);
         self.max_healths.swap(slot, last);
-        self.bullet_damages.swap(slot, last);
-        self.bullet_speeds.swap(slot, last);
         self.reload_times.swap(slot, last);
         self.barrels.swap(slot, last);
         self.barrel_timers.swap(slot, last);
+        self.stat_levels.swap(slot, last);
+        self.stat_points.swap(slot, last);
         self.upgrade_offered.swap(slot, last);
 
         self.ids.pop();
@@ -164,11 +168,11 @@ impl Tanks {
         self.levels.pop();
         self.tank_types.pop();
         self.max_healths.pop();
-        self.bullet_damages.pop();
-        self.bullet_speeds.pop();
         self.reload_times.pop();
         self.barrels.pop();
         self.barrel_timers.pop();
+        self.stat_levels.pop();
+        self.stat_points.pop();
         self.upgrade_offered.pop();
 
         self.sparse[id.index] = None;
@@ -194,14 +198,13 @@ impl Tanks {
             aim: &self.aim[slot],
             move_dir: &self.movement_dirs[slot],
             auto_fire: &self.auto_fire[slot],
-            // reload_timer: &self.reload_timers[slot],
             level: &self.levels[slot],
             tank_type: &self.tank_types[slot],
             max_health: &self.max_healths[slot],
-            bullet_damage: &self.bullet_damages[slot],
-            bullet_speed: &self.bullet_speeds[slot],
             reload_time: &self.reload_times[slot],
             barrels: &self.barrels[slot],
+            stat_levels: &self.stat_levels[slot],
+            stat_points: &self.stat_points[slot],
         })
     }
 
@@ -218,15 +221,14 @@ impl Tanks {
             aim: &mut self.aim[slot],
             move_dir: &mut self.movement_dirs[slot],
             auto_fire: &mut self.auto_fire[slot],
-            // reload_timer: &mut self.reload_timers[slot],
             level: &mut self.levels[slot],
             tank_type: &self.tank_types[slot],
             max_health: &mut self.max_healths[slot],
-            bullet_damage: &mut self.bullet_damages[slot],
-            bullet_speed: &mut self.bullet_speeds[slot],
             reload_time: &mut self.reload_times[slot],
             barrels: &mut self.barrels[slot],
             barrel_timers: &mut self.barrel_timers[slot],
+            stat_levels: &mut self.stat_levels[slot],
+            stat_points: &mut self.stat_points[slot],
         })
     }
 
@@ -308,10 +310,12 @@ impl Tanks {
         true
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.ids.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
     }

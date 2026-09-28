@@ -56,6 +56,7 @@ pub async fn start() {
         leaderboard: vec![],
         upgrade_request: None,
         upgrade_levels: [0, 1, 2, 3, 4, 5, 6, 7],
+        upgrade_points: 0,
 
         chat_message: None,
         chat_channel: structs::game_state::ChatChannel::Global,

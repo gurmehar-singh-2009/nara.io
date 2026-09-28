@@ -21,7 +21,9 @@ pub struct Scripting {
     pub entities: Arc<Mutex<Entities>>,
     pub weapons: WeaponRegistry,
     pub tanks: TankRegistry,
+    #[allow(dead_code)]
     pub abilities: Option<()>,
+    #[allow(dead_code)]
     pub commands: Arc<Mutex<HashMap<String, Function>>>,
     pub scheduler: Scheduler,
 

@@ -5,12 +5,14 @@
 #![allow(incomplete_features)]
 #![allow(clippy::module_inception)] // I don't think it's a big deal.
 
-use std::{ops::Deref, sync::Arc};
+use std::sync::Arc;
 
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use shared::packets::{
-    PACKET_SEED, Packet, TankSelectPacket, handshake::HandshakePacket, server_bound::{AimPacket, AutoFirePacket, ChatSendPacket, MovementPacket, SpawnReqPacket},
+    PACKET_SEED, Packet, StatUpgradePacket, TankSelectPacket,
+    handshake::HandshakePacket,
+    server_bound::{AimPacket, AutoFirePacket, ChatSendPacket, MovementPacket, SpawnReqPacket},
 };
 use snafu::ResultExt;
 use tokio::{net::TcpListener, sync::mpsc::unbounded_channel};
@@ -306,6 +308,16 @@ async fn main() -> Result<(), ServerError> {
                             }
                             Err(_) => {
                                 log!("failed to decode ChatSendPacket from {id}");
+                            }
+                        },
+
+                        14 => match StatUpgradePacket::decode(&plaintext) {
+                            Ok(StatUpgradePacket { stat, .. }) => {
+                                let _ =
+                                    game_channel_send.send(GameEvents::StatUpgrade { id, stat });
+                            }
+                            Err(_) => {
+                                log!("failed to decode StatUpgradePacket from {id}");
                             }
                         },
 

@@ -32,8 +32,9 @@ use crate::{
         buffers::{CameraUniform, EntityInstance},
         camera::{CameraController, SpringPos},
         chat::ChatPanel,
-        colours::{DARK_THEME, to_glyphon},
-        scoreboard::{Scoreboard, bar_ui_instance},
+        colours::{DARK_THEME, to_glyphon, with_alpha},
+        minimap,
+        scoreboard::{Scoreboard, bar_ui_instance, rounded_ui_instance},
         tank_upgrades::{TankUpgradePanel, default_classes},
         upgrade_panel::UpgradePanel,
     },
@@ -43,6 +44,11 @@ use crate::{
 const PLAYER_DISPLAY_SMOOTH_TIME: f32 = 0.06;
 const INSTANCE_CAPACITY: u64 = 4096; // seems like a big enough amount :thumbsup:
 const LOG_EVERY_FRAMES: u32 = 120;
+
+const PLAYER_ZOOM: f32 = 0.0038;
+
+const BULLET_STALE_FADE_MS: f64 = 200.0;
+const BULLET_STALE_CULL_MS: f64 = 900.0;
 
 const CULL_MARGIN: f32 = 150.0;
 const BULLET_CULL_RADIUS: f32 = 64.0;
@@ -54,6 +60,9 @@ const SCORE_TEXT_OUTLINE_PX: f32 = 2.0;
 
 const HEALTH_BAR_BORDER: f32 = 1.5;
 const HEALTH_BAR_INSET: f32 = 2.5;
+const HEALTH_BAR_FADE_SPEED: f32 = 10.0;
+const LEVEL_BAR_H: f32 = 12.0;
+const LEVEL_BAR_GAP: f32 = 8.0;
 
 fn bold_attrs() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif).weight(Weight::BOLD)
@@ -87,6 +96,15 @@ pub struct RenderState {
     last_stats_text: String,
     score_bar_buffer: glyphon::Buffer,
     last_score_bar_text: String,
+    level_bar_buffer: glyphon::Buffer,
+    last_level_text: String,
+    debug_buffer: glyphon::Buffer,
+    last_debug_text: String,
+    debug_frames: u32,
+    debug_fps: f64,
+    debug_frame_ms: f32,
+    debug_last: f64,
+    last_upgrade_levels: [u8; 8],
     scoreboard: Scoreboard,
     upgrade_panel: UpgradePanel,
     chat: ChatPanel,
@@ -229,7 +247,7 @@ impl RenderState {
                 [0.0, 0.0, 0.0, 1.0],
             ],
             camera_pos: [0.0, 0.0],
-            zoom: 0.005,
+            zoom: PLAYER_ZOOM,
             aspect_ratio,
             screen_size: [physical_width as f32, physical_height as f32],
             _pad: [0.0, 0.0],
@@ -364,8 +382,23 @@ impl RenderState {
         score_bar_buffer.set_text("", &bold_attrs(), Shaping::Basic, None);
         score_bar_buffer.shape_until_scroll(&mut font_system, false);
 
+        let mut level_bar_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(14.0, 16.0));
+        level_bar_buffer.set_size(Some(physical_width as f32), Some(physical_height as f32));
+        level_bar_buffer.set_text("", &bold_attrs(), Shaping::Basic, None);
+        level_bar_buffer.shape_until_scroll(&mut font_system, false);
+
+        let mut debug_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(14.0, 17.0));
+        debug_buffer.set_size(Some(physical_width as f32), Some(physical_height as f32));
+        debug_buffer.set_text(
+            "",
+            &Attrs::new().family(glyphon::Family::SansSerif),
+            Shaping::Basic,
+            None,
+        );
+        debug_buffer.shape_until_scroll(&mut font_system, false);
+
         let mut camera = CameraController::new();
-        camera.zoom = 0.005;
+        camera.zoom = PLAYER_ZOOM;
 
         Self {
             surface,
@@ -388,6 +421,15 @@ impl RenderState {
             last_stats_text: String::new(),
             score_bar_buffer,
             last_score_bar_text: String::new(),
+            level_bar_buffer,
+            last_level_text: String::new(),
+            debug_buffer,
+            last_debug_text: String::new(),
+            debug_frames: 0,
+            debug_fps: 0.0,
+            debug_frame_ms: 0.0,
+            debug_last: 0.0,
+            last_upgrade_levels: [0; 8],
             scoreboard,
             upgrade_panel,
             chat,
@@ -430,6 +472,10 @@ impl RenderState {
         self.text_buffer
             .set_size(Some(width as f32), Some(height as f32));
         self.score_bar_buffer
+            .set_size(Some(width as f32), Some(height as f32));
+        self.level_bar_buffer
+            .set_size(Some(width as f32), Some(height as f32));
+        self.debug_buffer
             .set_size(Some(width as f32), Some(height as f32));
 
         self.update_camera([self.camera.pos.x, self.camera.pos.y], self.camera.zoom);
@@ -486,6 +532,9 @@ impl RenderState {
         zoom: f32,
         stats_text: &str,
         score_text: &str,
+        level_text: &str,
+        debug_text: &str,
+        upgrade_points: u32,
         upgrade_levels: &[u8; 8],
     ) {
         self.window.request_redraw();
@@ -510,7 +559,8 @@ impl RenderState {
             (Vec::new(), Vec::new())
         };
         let (panel_instances, panel_areas) = if mode == 0 {
-            self.upgrade_panel.render_data(screen, upgrade_levels, 67)
+            self.upgrade_panel
+                .render_data(screen, upgrade_levels, upgrade_points)
         } else {
             (Vec::new(), Vec::new())
         };
@@ -530,6 +580,60 @@ impl RenderState {
         all_instances.extend(panel_instances);
         all_instances.extend(chat_instances);
         all_instances.extend(class_instances);
+
+        let mut bubble_rects: Vec<(usize, f32, f32, f32, f32, f32)> = Vec::new();
+        if mode == 0 {
+            let bubbles = self.chat.bubbles();
+            if !bubbles.is_empty() {
+                let aspect_ratio = if screen_h > 0.0 {
+                    screen_w / screen_h
+                } else {
+                    1.0
+                };
+
+                for (bi, bubble) in bubbles.iter().enumerate() {
+                    let alpha = self.chat.bubble_alpha(bi);
+                    if alpha <= 0.01 {
+                        continue;
+                    }
+
+                    let Some(entity) = entities
+                        .iter()
+                        .find(|e| e.text.map_or(false, |t| t.source_text == bubble.sender))
+                    else {
+                        continue;
+                    };
+
+                    let (sx, sy) = Renderer::world_to_screen(
+                        entity.instance.position,
+                        camera_pos,
+                        zoom,
+                        aspect_ratio,
+                        screen_w,
+                        screen_h,
+                    );
+
+                    let body_r_px = entity.instance.size[0] * zoom * screen_h * 0.25;
+                    let text_w = Renderer::text_width(&bubble.body);
+                    let w = text_w + 16.0;
+                    let h = bubble.lines as f32 * 19.0 + 10.0;
+                    let bottom = sy - body_r_px - 14.0;
+                    let top = bottom - h;
+                    let left = (sx - w * 0.5).clamp(8.0, (screen_w - w - 8.0).max(8.0));
+
+                    all_instances.push(rounded_ui_instance(
+                        Vec2::new(left + w * 0.5, top + h * 0.5),
+                        Vec2::new(w, h),
+                        screen,
+                        with_alpha(DARK_THEME.bar_background, alpha),
+                        with_alpha(DARK_THEME.scoreboard_row_border, alpha),
+                        3.0,
+                        8.0,
+                    ));
+                    bubble_rects.push((bi, left, top, w, h, alpha));
+                }
+            }
+        }
 
         self.num_instances = all_instances.len() as u32;
         if mode < 2 && !all_instances.is_empty() {
@@ -587,6 +691,26 @@ impl RenderState {
             self.last_score_bar_text = score_text.to_string();
         }
 
+        if mode == 0 && level_text != self.last_level_text {
+            self.level_bar_buffer
+                .set_text(level_text, &bold_attrs(), Shaping::Basic, None);
+            self.level_bar_buffer
+                .shape_until_scroll(&mut self.font_system, false);
+            self.last_level_text = level_text.to_string();
+        }
+
+        if mode == 0 && debug_text != self.last_debug_text {
+            self.debug_buffer.set_text(
+                debug_text,
+                &Attrs::new().family(glyphon::Family::SansSerif),
+                Shaping::Basic,
+                None,
+            );
+            self.debug_buffer
+                .shape_until_scroll(&mut self.font_system, false);
+            self.last_debug_text = debug_text.to_string();
+        }
+
         let mut text_areas = Vec::new();
 
         if mode == 0 {
@@ -611,7 +735,7 @@ impl RenderState {
 
             for entity in entities {
                 if let Some(text_comp) = entity.text {
-                    let (screen_x, screen_y) = Renderer::world_to_screen(
+                    let (sx, sy) = Renderer::world_to_screen(
                         entity.instance.position,
                         camera_pos,
                         zoom,
@@ -620,8 +744,10 @@ impl RenderState {
                         screen_h,
                     );
 
-                    let base_left = screen_x + text_comp.offset[0];
-                    let base_top = screen_y + text_comp.offset[1];
+                    // name below tank body
+                    let body_r_px = entity.instance.size[0] * zoom * screen_h * 0.25;
+                    let base_left = sx + text_comp.offset[0];
+                    let base_top = sy + body_r_px + 6.0;
 
                     for (dx, dy) in OUTLINE_DIRS {
                         text_areas.push(TextArea {
@@ -655,6 +781,47 @@ impl RenderState {
                         custom_glyphs: &[],
                     });
                 }
+            }
+
+            // chat bubble text
+            for (bi, left, top, _w, _h, alpha) in bubble_rects.iter() {
+                let Some(bubble) = self.chat.bubble(*bi) else {
+                    continue;
+                };
+                let fill = Color::rgba(255, 255, 255, (*alpha * 255.0) as u8);
+                let outline = to_glyphon(with_alpha(DARK_THEME.fill_border, *alpha));
+
+                for (dx, dy) in OUTLINE_DIRS {
+                    text_areas.push(TextArea {
+                        buffer: &bubble.body,
+                        left: *left + 8.0 + dx * 1.5,
+                        top: *top + 5.0 + dy * 1.5,
+                        scale: 1.0,
+                        bounds: TextBounds {
+                            left: 0,
+                            top: 0,
+                            right: self.config.width as i32,
+                            bottom: self.config.height as i32,
+                        },
+                        default_color: outline,
+                        custom_glyphs: &[],
+                    });
+                }
+
+                text_areas.push(TextArea {
+                    buffer: &bubble.body,
+                    left: *left + 8.0,
+                    top: *top + 5.0,
+                    scale: 1.0,
+                    bounds: TextBounds {
+                        left: 0,
+                        top: 0,
+                        right: self.config.width as i32,
+                        bottom: self.config.height as i32,
+                    },
+                    default_color: fill,
+                    custom_glyphs: &[],
+                });
             }
 
             text_areas.push(TextArea {
@@ -708,6 +875,90 @@ impl RenderState {
                         bottom: self.config.height as i32,
                     },
                     default_color: Color::rgb(255, 255, 255),
+                    custom_glyphs: &[],
+                });
+            }
+
+            {
+                let level_cy = screen_h
+                    - SCORE_BAR_BOTTOM
+                    - SCORE_BAR_H * 0.5
+                    - LEVEL_BAR_GAP
+                    - LEVEL_BAR_H * 0.5;
+                let text_w = Renderer::text_width(&self.level_bar_buffer);
+                let left = screen_w * 0.5 - text_w * 0.5;
+                let top = level_cy - 8.0;
+
+                for (dx, dy) in OUTLINE_DIRS {
+                    text_areas.push(TextArea {
+                        buffer: &self.level_bar_buffer,
+                        left: left + dx * SCORE_TEXT_OUTLINE_PX,
+                        top: top + dy * SCORE_TEXT_OUTLINE_PX,
+                        scale: 1.0,
+                        bounds: TextBounds {
+                            left: 0,
+                            top: 0,
+                            right: self.config.width as i32,
+                            bottom: self.config.height as i32,
+                        },
+                        default_color: text_border_color,
+                        custom_glyphs: &[],
+                    });
+                }
+
+                text_areas.push(TextArea {
+                    buffer: &self.level_bar_buffer,
+                    left,
+                    top,
+                    scale: 1.0,
+                    bounds: TextBounds {
+                        left: 0,
+                        top: 0,
+                        right: self.config.width as i32,
+                        bottom: self.config.height as i32,
+                    },
+                    default_color: Color::rgb(255, 255, 255),
+                    custom_glyphs: &[],
+                });
+            }
+
+            {
+                let mut w = 0.0f32;
+                for run in self.debug_buffer.layout_runs() {
+                    w = w.max(run.line_w);
+                }
+                let left = screen_w - 20.0 - w;
+                let top = 14.0;
+
+                for (dx, dy) in OUTLINE_DIRS {
+                    text_areas.push(TextArea {
+                        buffer: &self.debug_buffer,
+                        left: left + dx * 1.0,
+                        top: top + dy * 1.0,
+                        scale: 1.0,
+                        bounds: TextBounds {
+                            left: 0,
+                            top: 0,
+                            right: self.config.width as i32,
+                            bottom: self.config.height as i32,
+                        },
+                        default_color: text_border_color,
+                        custom_glyphs: &[],
+                    });
+                }
+
+                text_areas.push(TextArea {
+                    buffer: &self.debug_buffer,
+                    left,
+                    top,
+                    scale: 1.0,
+                    bounds: TextBounds {
+                        left: 0,
+                        top: 0,
+                        right: self.config.width as i32,
+                        bottom: self.config.height as i32,
+                    },
+                    default_color: Color::rgba(200, 220, 255, 255),
                     custom_glyphs: &[],
                 });
             }
@@ -876,57 +1127,68 @@ impl Renderer {
             None => 1.0 / 60.0,
         };
         state.last_frame_time = Some(now);
+
+        state.debug_frame_ms = state.debug_frame_ms * 0.9 + dt * 1000.0 * 0.1;
+        state.debug_frames += 1;
+        if state.debug_last == 0.0 {
+            state.debug_last = now;
+        } else if now - state.debug_last >= 500.0 {
+            let elapsed = ((now - state.debug_last) / 1000.0).max(1e-3);
+            state.debug_fps = state.debug_frames as f64 / elapsed;
+            state.debug_frames = 0;
+            state.debug_last = now;
+        }
+
         (now, dt)
     }
 
     fn log_stats(state: &mut RenderState, game: &GameState, now: f64) {
-        // if state.last_log_time == 0.0 {
-        //     state.last_log_time = now;
-        //     return;
-        // }
 
-        // state.log_frames += 1;
-        // if state.log_frames >= LOG_EVERY_FRAMES {
-        //     let elapsed = ((now - state.last_log_time) / 1000.0).max(0.001);
-        //     let fps = state.log_frames as f64 / elapsed;
-        //     web_sys::console::log_1(
-        //         &format!(
-        //             "fps {:.0} | players {} | shapes {} | bullets {} | inst
-        // {} | mode {}",             fps,
-        //             game.players.len(),
-        //             game.shapes.len(),
-        //             game.bullets.len(),
-        //             state.num_instances,
-        //             state.debug_render_mode,
-        //         )
-        //         .into(),
-        //     );
-        //     state.log_frames = 0;
-        //     state.last_log_time = now;
-        // }
     }
 
     fn advance_entities(state: &mut RenderState, game: &mut GameState, now: f64, dt: f32) {
         game.tick_render(dt);
 
-        const BULLET_STALE_FADE_MS: f64 = 450.0;
-        const BULLET_STALE_CULL_MS: f64 = 900.0;
         for b in game.bullets.iter_mut() {
             if now - b.last_update_time > BULLET_STALE_FADE_MS {
                 b.dying = true;
-                b.render_alpha -= dt * 4.0;
+                b.render_alpha -= dt * 5.0;
             }
         }
         game.bullets
             .retain(|b| b.render_alpha > 0.0 && (now - b.last_update_time) < BULLET_STALE_CULL_MS);
 
+        // (owner conn id << 8) | (barrel index + 1)
+        for b in game.bullets.iter_mut() {
+            if !b.is_new {
+                continue;
+            }
+            b.is_new = false;
+
+            if b.recoil == 0 {
+                continue;
+            }
+
+            let owner_id = b.recoil >> 8;
+            let barrel_idx = ((b.recoil & 0xff) - 1) as usize;
+
+            if let Some(p) = game.players.iter_mut().find(|p| p.id == owner_id) {
+                p.kick_barrel(barrel_idx);
+            }
+        }
+
+        const SHAPE_STALE_MS: f64 = 3000.0;
+        const SHAPE_FADE_OUT: f32 = 0.30;
+        for s in game.shapes.iter_mut() {
+            if !s.dying && now - s.last_update_time > SHAPE_STALE_MS {
+                s.dying = true;
+            }
+            if s.dying {
+                s.render_alpha = (s.render_alpha - dt / SHAPE_FADE_OUT).max(0.0);
+            }
+        }
+
         game.shapes.retain(|s| s.render_alpha > 0.0 || !s.dying);
-        // const SHAPE_STALE_MS: f64 = 3000.0;
-        // for s in game.shapes.iter_mut() {
-        //     if !s.dying && now - s.last_update_time > SHAPE_STALE_MS {
-        //         s.dying = true;
-        //     }
-        // }
 
         let my_player_id = game.my_player_id;
 
@@ -934,6 +1196,14 @@ impl Renderer {
             let alpha = ((now - p.last_update_time) / 100.0).min(1.0) as f32;
             p.render_pos = p.last_pos.lerp(p.pos, alpha);
             p.render_health += (p.health as f32 - p.render_health) * 0.1;
+
+            let bar_target = if p.render_health < p.max_health as f32 - 0.5 {
+                1.0
+            } else {
+                0.0
+            };
+            p.health_bar_alpha +=
+                (bar_target - p.health_bar_alpha) * (1.0 - (-HEALTH_BAR_FADE_SPEED * dt).exp());
 
             if Some(p.id) != my_player_id {
                 let mut diff = p.rot - p.last_rot;
@@ -952,6 +1222,14 @@ impl Renderer {
             s.render_pos = s.last_pos.lerp(s.pos, alpha);
             s.render_health += (s.health as f32 - s.render_health) * 0.1;
 
+            let bar_target = if s.render_health < s.max_health as f32 - 0.5 {
+                1.0
+            } else {
+                0.0
+            };
+            s.health_bar_alpha +=
+                (bar_target - s.health_bar_alpha) * (1.0 - (-HEALTH_BAR_FADE_SPEED * dt).exp());
+
             let mut diff = s.rot - s.last_rot;
             if diff > std::f32::consts::PI {
                 diff -= std::f32::consts::TAU;
@@ -965,6 +1243,11 @@ impl Renderer {
         for b in game.bullets.iter_mut() {
             let alpha = ((now - b.last_update_time) / 100.0).min(1.0) as f32;
             b.render_pos = b.last_pos.lerp(b.pos, alpha);
+
+            if b.dying {
+                let vel = (b.pos - b.last_pos) / 0.1;
+                b.render_pos += vel * dt * b.render_alpha;
+            }
 
             let mut diff = b.rot - b.last_rot;
             if diff > std::f32::consts::PI {
@@ -993,7 +1276,7 @@ impl Renderer {
         state.had_player = has_player;
 
         let my_player_scale = game.my_player().map(|p| p.scale).unwrap_or(1.0);
-        let target_zoom = 0.005 / my_player_scale;
+        let target_zoom = PLAYER_ZOOM / my_player_scale;
         state.camera.update_zoom(target_zoom, dt);
 
         if let Some(p) = game.my_player() {
@@ -1051,10 +1334,11 @@ impl Renderer {
                 Some(tc) if tc.source_text == p.name => {}
                 Some(tc) => {
                     tc.update_text(&mut state.font_system, &p.name);
-                    tc.set_centered_offset(-560.0);
                 }
                 None => {
-                    labels.insert(p.id, TextComponent::new(&mut state.font_system, &p.name));
+                    let mut tc = TextComponent::new(&mut state.font_system, &p.name);
+                    tc.center_horizontally();
+                    labels.insert(p.id, tc);
                 }
             }
         }
@@ -1149,18 +1433,19 @@ impl Renderer {
                 continue;
             }
 
-            let bar_w = s.size * 0.7;
-            let bar_h = 7.0;
-            let bar_y = s.render_pos.y - s.size * 0.5;
-            let inset = 1.5;
-            let fg_h = bar_h - inset * 2.0;
-            let inner_w = bar_w - inset * 2.0;
+            let bar_alpha = s.health_bar_alpha;
+            if bar_alpha > 0.01 {
+                let bar_w = s.size * 0.7;
+                let bar_h = 7.0;
+                let bar_y = s.render_pos.y - s.size * 0.5;
+                let inset = 1.5;
+                let fg_h = bar_h - inset * 2.0;
+                let inner_w = bar_w - inset * 2.0;
 
-            let health_percent = (s.render_health / s.max_health as f32).max(0.0).min(1.0);
-            let fg_w = inner_w * health_percent;
-            let inner_left = s.render_pos.x - bar_w * 0.5 + inset;
+                let health_percent = (s.render_health / s.max_health as f32).max(0.0).min(1.0);
+                let fg_w = inner_w * health_percent;
+                let inner_left = s.render_pos.x - bar_w * 0.5 + inset;
 
-            if s.render_health < s.max_health as f32 {
                 instances.push(RenderEntity {
                     instance: EntityInstance {
                         position: [s.render_pos.x, bar_y],
@@ -1168,10 +1453,13 @@ impl Renderer {
                         rotation: 0.0,
                         shape_type: 4,
                         sides: 4,
-                        fill_color: DARK_THEME.health_bar_background,
-                        border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_background),
-                        border_thickness: 10.,
-                        extra_param: 1.0, // full pill
+                        fill_color: with_alpha(DARK_THEME.health_bar_background, bar_alpha),
+                        border_color: with_alpha(
+                            DARK_THEME.outline_for(DARK_THEME.health_bar_background),
+                            bar_alpha,
+                        ),
+                        border_thickness: 0.,
+                        extra_param: 1.0,
                     },
                     text: None,
                 });
@@ -1184,8 +1472,11 @@ impl Renderer {
                             rotation: 0.0,
                             shape_type: 4,
                             sides: 4,
-                            fill_color: DARK_THEME.health_bar_foreground,
-                            border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_foreground),
+                            fill_color: with_alpha(DARK_THEME.health_bar_foreground, bar_alpha),
+                            border_color: with_alpha(
+                                DARK_THEME.outline_for(DARK_THEME.health_bar_foreground),
+                                bar_alpha,
+                            ),
                             border_thickness: HEALTH_BAR_BORDER,
                             extra_param: 1.0,
                         },
@@ -1211,48 +1502,57 @@ impl Renderer {
             if p.dying {
                 continue;
             }
-            let bar_w = 44.0 * p.scale;
-            let bar_h = 10.0 * p.scale;
-            let bar_y = p.render_pos.y - 32.0 * p.scale;
-            let inset = HEALTH_BAR_INSET * p.scale;
-            let fg_h = bar_h - inset * 2.0;
-            let inner_w = bar_w - inset * 2.0;
 
-            let health_percent = (p.render_health / p.max_health as f32).max(0.0).min(1.0);
-            let fg_w = inner_w * health_percent;
-            let inner_left = p.render_pos.x - bar_w * 0.5 + inset;
+            let bar_alpha = p.health_bar_alpha;
+            if bar_alpha > 0.01 {
+                let bar_w = 44.0 * p.scale;
+                let bar_h = 10.0 * p.scale;
+                let bar_y = p.render_pos.y - 32.0 * p.scale;
+                let inset = HEALTH_BAR_INSET * p.scale;
+                let fg_h = bar_h - inset * 2.0;
+                let inner_w = bar_w - inset * 2.0;
 
-            instances.push(RenderEntity {
-                instance: EntityInstance {
-                    position: [p.render_pos.x, bar_y],
-                    size: [bar_w, bar_h],
-                    rotation: 0.0,
-                    shape_type: 4,
-                    sides: 4,
-                    fill_color: DARK_THEME.health_bar_background,
-                    border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_background),
-                    border_thickness: 0.,
-                    extra_param: 1.0, // full pill
-                },
-                text: None,
-            });
+                let health_percent = (p.render_health / p.max_health as f32).max(0.0).min(1.0);
+                let fg_w = inner_w * health_percent;
+                let inner_left = p.render_pos.x - bar_w * 0.5 + inset;
 
-            if fg_w > 0.1 {
                 instances.push(RenderEntity {
                     instance: EntityInstance {
-                        position: [inner_left + fg_w * 0.5, bar_y],
-                        size: [fg_w, fg_h],
+                        position: [p.render_pos.x, bar_y],
+                        size: [bar_w, bar_h],
                         rotation: 0.0,
                         shape_type: 4,
                         sides: 4,
-                        fill_color: DARK_THEME.health_bar_foreground,
-                        border_color: DARK_THEME.outline_for(DARK_THEME.health_bar_foreground),
-                        border_thickness: HEALTH_BAR_BORDER, /* player loop: HEALTH_BAR_BORDER *
-                                                              * p.scale */
-                        extra_param: 1.0, // full pill
+                        fill_color: with_alpha(DARK_THEME.health_bar_background, bar_alpha),
+                        border_color: with_alpha(
+                            DARK_THEME.outline_for(DARK_THEME.health_bar_background),
+                            bar_alpha,
+                        ),
+                        border_thickness: 0.,
+                        extra_param: 1.0,
                     },
                     text: None,
                 });
+
+                if fg_w > 0.1 {
+                    instances.push(RenderEntity {
+                        instance: EntityInstance {
+                            position: [inner_left + fg_w * 0.5, bar_y],
+                            size: [fg_w, fg_h],
+                            rotation: 0.0,
+                            shape_type: 4,
+                            sides: 4,
+                            fill_color: with_alpha(DARK_THEME.health_bar_foreground, bar_alpha),
+                            border_color: with_alpha(
+                                DARK_THEME.outline_for(DARK_THEME.health_bar_foreground),
+                                bar_alpha,
+                            ),
+                            border_thickness: HEALTH_BAR_BORDER,
+                            extra_param: 1.0,
+                        },
+                        text: None,
+                    });
+                }
             }
         }
 
@@ -1275,6 +1575,34 @@ impl Renderer {
         let bar_h = SCORE_BAR_H;
         let bar_left = screen.x * 0.5 - bar_w * 0.5;
         let bar_cy = screen.y - SCORE_BAR_BOTTOM;
+
+        let lvl_cy = bar_cy - bar_h * 0.5 - LEVEL_BAR_GAP - LEVEL_BAR_H * 0.5;
+        instances.push(RenderEntity {
+            instance: bar_ui_instance(
+                Vec2::new(bar_left + bar_w * 0.5, lvl_cy),
+                Vec2::new(bar_w, LEVEL_BAR_H),
+                screen,
+                DARK_THEME.bar_background,
+            ),
+            text: None,
+        });
+        let lvl_fill = if game.xp_to_next > 0 {
+            (game.xp as f32 / game.xp_to_next as f32).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let lvl_w = bar_w * lvl_fill;
+        if lvl_w > 4.0 {
+            instances.push(RenderEntity {
+                instance: bar_ui_instance(
+                    Vec2::new(bar_left + lvl_w * 0.5, lvl_cy),
+                    Vec2::new(lvl_w, LEVEL_BAR_H),
+                    screen,
+                    DARK_THEME.xp_bar_fill,
+                ),
+                text: None,
+            });
+        }
 
         instances.push(RenderEntity {
             instance: bar_ui_instance(
@@ -1307,11 +1635,20 @@ impl Renderer {
                     Vec2::new(bar_left + fg_w * 0.5, bar_cy),
                     Vec2::new(fg_w, bar_h),
                     screen,
-                    DARK_THEME.xp_bar_fill,
+                    DARK_THEME.score_bar_fill,
                 ),
                 text: None,
             });
         }
+
+        instances.extend(
+            minimap::render_data(game, screen)
+                .into_iter()
+                .map(|instance| RenderEntity {
+                    instance,
+                    text: None,
+                }),
+        );
 
         instances
     }
@@ -1325,6 +1662,24 @@ impl Renderer {
 
     fn score_bar_text(game: &GameState) -> String {
         format!("Score: {}", Self::my_score(game))
+    }
+
+    fn level_bar_text(game: &GameState) -> String {
+        format!("Lvl {}", game.level)
+    }
+
+    fn debug_text(game: &GameState, state: &RenderState) -> String {
+        format!(
+            "fps: {:.0} ({:.1} ms)\nmode: {}\nzoom: {:.4}\nplayers: {}\nshapes: {}\nbullets: {}\ninstances: {}",
+            state.debug_fps,
+            state.debug_frame_ms,
+            state.debug_render_mode,
+            state.camera.zoom,
+            game.players.len(),
+            game.shapes.len(),
+            game.bullets.len(),
+            state.num_instances,
+        )
     }
 }
 
@@ -1463,8 +1818,6 @@ impl ApplicationHandler<RenderState> for Renderer {
                         .upgrade_panel
                         .tick(dt, state.cursor_pos, window, screen);
 
-                    // state.class_panel.tick(dt,
-                    // game.class_upgrades_available);
                     state.class_panel.tick(
                         &mut state.font_system,
                         dt,
@@ -1482,8 +1835,18 @@ impl ApplicationHandler<RenderState> for Renderer {
                     instances.extend(Self::build_hud_instances(&game, screen));
                     let stats_text = Self::stats_text(&game);
                     let score_text = Self::score_bar_text(&game);
+                    let level_text = Self::level_bar_text(&game);
+                    let debug_text = Self::debug_text(&game, state);
 
                     let upgrade_levels = game.upgrade_levels;
+                    let upgrade_points = game.upgrade_points;
+
+                    for (i, &lvl) in upgrade_levels.iter().enumerate() {
+                        if lvl > state.last_upgrade_levels[i] {
+                            state.upgrade_panel.flash(i);
+                        }
+                    }
+                    state.last_upgrade_levels = upgrade_levels;
 
                     drop(game);
 
@@ -1493,6 +1856,9 @@ impl ApplicationHandler<RenderState> for Renderer {
                         zoom,
                         &stats_text,
                         &score_text,
+                        &level_text,
+                        &debug_text,
+                        upgrade_points,
                         &upgrade_levels,
                     );
                 }
@@ -1706,7 +2072,7 @@ pub struct TextComponent {
 
 impl TextComponent {
     pub fn new(font_system: &mut FontSystem, initial_text: &str) -> Self {
-        let mut buffer = glyphon::Buffer::new(font_system, Metrics::new(72.0, 80.0));
+        let mut buffer = glyphon::Buffer::new(font_system, Metrics::new(24.0, 28.0));
 
         buffer.set_text(
             initial_text,
@@ -1716,15 +2082,12 @@ impl TextComponent {
         );
         buffer.shape_until_scroll(font_system, false);
 
-        let mut component = Self {
+        Self {
             buffer,
             color: Color::rgb(255, 255, 255),
             offset: [0.0, 0.0],
             source_text: initial_text.to_string(),
-        };
-
-        component.set_centered_offset(-560.0);
-        component
+        }
     }
 
     pub fn measure(&self) -> (f32, f32) {
@@ -1739,9 +2102,9 @@ impl TextComponent {
         (width, height)
     }
 
-    pub fn set_centered_offset(&mut self, y_offset: f32) {
+    pub fn center_horizontally(&mut self) {
         let (width, _) = self.measure();
-        self.offset = [-width / 2.0, y_offset];
+        self.offset[0] = -width / 2.0;
     }
 
     pub fn update_text(&mut self, font_system: &mut FontSystem, new_text: &str) {
@@ -1753,5 +2116,6 @@ impl TextComponent {
         );
         self.buffer.shape_until_scroll(font_system, false);
         self.source_text = new_text.to_string();
+        self.center_horizontally();
     }
 }

@@ -41,6 +41,9 @@ hkdf = { workspace = true }
 sha2 = { workspace = true }
 getrandom = { version = "0.4.3", features = ["wasm_js"] }
 
+[lints]
+workspace = true
+
 [dependencies.web-sys]
 version = "0.3.103"
 features = [

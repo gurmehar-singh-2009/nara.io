@@ -5,7 +5,7 @@ pub mod bullet;
 // pub mod hexagon;
 // pub mod octagon;
 // pub mod pentagon;
-pub mod square;
+pub mod shape;
 pub mod tank;
 // pub mod triangle;
 

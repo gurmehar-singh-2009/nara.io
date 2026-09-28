@@ -2,6 +2,7 @@ use mlua::{FromLua, Function, Lua, Table, Value};
 
 use crate::fs::tank_defs::{Barrel, Bullet, Stat, Tank, TankFlags};
 
+#[allow(dead_code)]
 pub struct WeaponDef {
     pub damage: f32,
     pub reload: f32,
@@ -22,6 +23,7 @@ pub fn load_weapon(lua: &Lua, path: &str) -> mlua::Result<WeaponDef> {
 pub struct TankDef {
     pub tank: Tank,
     pub upgrade_names: Vec<String>,
+    #[allow(dead_code)]
     pub on_shoot: Option<Function>,
 }
 

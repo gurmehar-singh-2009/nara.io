@@ -8,7 +8,7 @@ use hkdf::Hkdf;
 use js_sys::Uint8Array;
 use sha2::Sha256;
 use shared::packets::{
-    PACKET_SEED, Packet, TankSelectPacket, TankTreePacket,
+    PACKET_SEED, Packet, PlayerUpgradesPacket, StatUpgradePacket, TankSelectPacket, TankTreePacket,
     client_bound::{
         AddEntityPacket, EntityType, LeaderboardPacket, PlayerStatsPacket, RemoveEntityPacket,
         UpdateEntityPacket,
@@ -275,9 +275,6 @@ impl Socket {
                                             if let Some(existing) =
                                                 game.players.iter_mut().find(|p| p.id == data.id)
                                             {
-                                                // existing.scale =
-                                                //     1.0 + (data.level - 1) as
-                                                // f32 * 0.08;
                                                 existing.scale = level_scale(data.level);
                                                 existing.barrels = data.barrels.clone();
                                             } else {
@@ -286,9 +283,6 @@ impl Socket {
                                                     data.name,
                                                     Vec2::from_array([data.x, data.y]),
                                                 );
-                                                // entity.scale = 1.0 +
-                                                // (data.level - 1) as f32 *
-                                                // 0.08;
                                                 entity.scale = level_scale(data.level);
                                                 entity.barrels = data.barrels.clone();
                                                 if data.is_entity_mine {
@@ -299,7 +293,7 @@ impl Socket {
                                         }
                                         EntityType::Shape => {
                                             game.shapes.retain(|s| s.id != data.id);
-                                            let shape = crate::entities::square::Shape::new(
+                                            let shape = crate::entities::shape::Shape::new(
                                                 data.id, data.x, data.y, data.level,
                                             );
                                             game.shapes.push(shape);
@@ -338,12 +332,21 @@ impl Socket {
                                                     bullet.pos = glam::Vec2::new(entry.x, entry.y);
                                                     bullet.rot = entry.rot;
                                                     bullet.last_update_time = current_time;
+                                                    // bullet.dying = false;
+                                                    if entry.scale > 2.0 {
+                                                        bullet.radius = entry.scale;
+                                                    }
                                                 } else {
                                                     let mut new_bullet =
                                                         crate::entities::bullet::Bullet::new(
                                                             entry.id, entry.x, entry.y,
                                                         );
                                                     new_bullet.last_update_time = current_time;
+                                                    // new_bullet.dying = false;
+                                                    if entry.scale > 2.0 {
+                                                        new_bullet.radius = entry.scale;
+                                                    }
+                                                    new_bullet.recoil = entry.kind;
                                                     game.bullets.push(new_bullet);
                                                 }
                                             }
@@ -362,7 +365,7 @@ impl Socket {
                                                     shape.last_update_time = current_time;
                                                 } else {
                                                     let mut new_shape =
-                                                        crate::entities::square::Shape::new(
+                                                        crate::entities::shape::Shape::new(
                                                             entry.id, entry.x, entry.y, entry.kind,
                                                         );
                                                     new_shape.last_update_time = current_time;
@@ -518,6 +521,32 @@ impl Socket {
                                         }
                                     }
 
+                                    if let Some(request) = game.upgrade_request.take() {
+                                        if (1..=8).contains(&request) {
+                                            let plaintext = StatUpgradePacket::new(
+                                                request - 1,
+                                                PACKET_SEED as u64,
+                                            )
+                                            .encode();
+                                            let nonce_counter = {
+                                                let mut counter =
+                                                    send_nonce_count_for_reader.borrow_mut();
+                                                let value = *counter;
+                                                *counter += 1;
+                                                value
+                                            };
+                                            let cipher_ref = send_cipher_for_reader.borrow();
+                                            if let Some(cipher) = cipher_ref.as_ref() {
+                                                if let Ok(encrypted) = cipher.encrypt(
+                                                    &nonce(nonce_counter),
+                                                    plaintext.as_ref(),
+                                                ) {
+                                                    let _ = tx.unbounded_send(encrypted.to_vec());
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     drop(game);
                                 }
                                 Err(e) => {
@@ -648,6 +677,21 @@ impl Socket {
                                 Err(e) => {
                                     web_sys::console::error_1(
                                         &format!("ChatMessagePacket decode failed: {e:?}").into(),
+                                    );
+                                }
+                            },
+
+                            15 => match PlayerUpgradesPacket::decode(&plaintext) {
+                                Ok(data) => {
+                                    let mut game = game_for_reader.borrow_mut();
+                                    game.upgrade_levels = data.levels;
+                                    game.upgrade_points = data.points;
+                                    drop(game);
+                                }
+                                Err(e) => {
+                                    web_sys::console::error_1(
+                                        &format!("PlayerUpgradesPacket decode failed: {e:?}")
+                                            .into(),
                                     );
                                 }
                             },

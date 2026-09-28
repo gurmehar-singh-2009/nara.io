@@ -6,7 +6,7 @@ use shared::packets::{TankOption, client_bound::BarrelDef};
 
 use crate::render::{
     buffers::EntityInstance,
-    colours::{DARK_THEME, to_glyphon},
+    colours::{Color, DARK_THEME, to_glyphon},
     scoreboard::rounded_ui_instance,
 };
 
@@ -17,14 +17,14 @@ const TILE_BORDER: f32 = 4.0;
 const GAP: f32 = 14.0;
 const MIN_COLS: usize = 3;
 const MAX_COLS: usize = 5;
-const OPEN_TOP: f32 = 14.0;
+const OPEN_TOP: f32 = 96.0;
 const SLIDE_SPEED: f32 = 12.0;
 const CLICKABLE_OPEN: f32 = 0.9;
 
 const ICON_CY: f32 = 68.0;
 
-const TANK_BODY_SIZE: f32 = 42.0; // `let size = 42.0 * self.scale`
-const TANK_BORDER: f32 = 3.0; // `border_thickness: 3.0 * self.scale`
+const TANK_BODY_SIZE: f32 = 42.0;
+const TANK_BORDER: f32 = 3.0;
 
 const ICON_BODY_PX: f32 = 54.0;
 
@@ -67,10 +67,10 @@ pub struct TankClassDef {
 }
 
 impl TankClassDef {
-    fn from_option(option: &TankOption) -> Self {
+    fn from_option(option: &TankOption, index: usize) -> Self {
         Self {
             name: option.name.clone(),
-            color: tier_color(option.tier),
+            color: tank_color(index),
             sides: option.sides,
             barrels: option.barrels.clone(),
         }
@@ -81,13 +81,17 @@ pub fn default_classes() -> Vec<TankClassDef> {
     Vec::new()
 }
 
-fn tier_color(tier: u32) -> [f32; 4] {
-    match tier % 4 {
-        0 => DARK_THEME.team_blue,
-        1 => DARK_THEME.team_red,
-        2 => DARK_THEME.team_purple,
-        _ => DARK_THEME.pentagon,
-    }
+fn tank_color(index: usize) -> Color {
+    const PALETTE: [Color; 7] = [
+        DARK_THEME.team_blue,   // #00B2E1
+        DARK_THEME.team_red,    // #F14E54
+        DARK_THEME.team_purple, // #F177DD
+        DARK_THEME.team_green,  // #00E16E
+        DARK_THEME.square,      // #FFE869
+        DARK_THEME.pentagon,    // #768DFF
+        DARK_THEME.triangle,    // #FC7677
+    ];
+    PALETTE[index % PALETTE.len()]
 }
 
 fn bold() -> Attrs<'static> {
@@ -186,8 +190,10 @@ fn push_tank_icon(
 pub struct TankUpgradePanel {
     defs: Vec<TankClassDef>,
     labels: Vec<Buffer>,
+    /// 0 = closed (above the screen), 1 = fully open
     open: f32,
     pinned: bool,
+    /// icon rotation (radians); advances in tick so the tanks spin
     spin: f32,
     defs_gen: u32,
 }
@@ -207,7 +213,11 @@ impl TankUpgradePanel {
 
         let (genr, options) = options_snapshot();
         if genr != 0 {
-            let defs = options.iter().map(TankClassDef::from_option).collect();
+            let defs = options
+                .iter()
+                .enumerate()
+                .map(|(i, o)| TankClassDef::from_option(o, i))
+                .collect();
             panel.set_defs(fs, defs);
             panel.defs_gen = genr;
         }
@@ -279,7 +289,11 @@ impl TankUpgradePanel {
         let (genr, options) = options_snapshot();
         if genr != self.defs_gen {
             self.defs_gen = genr;
-            let defs: Vec<TankClassDef> = options.iter().map(TankClassDef::from_option).collect();
+            let defs: Vec<TankClassDef> = options
+                .iter()
+                .enumerate()
+                .map(|(i, o)| TankClassDef::from_option(o, i))
+                .collect();
             self.set_defs(fs, defs);
         }
 
@@ -290,6 +304,7 @@ impl TankUpgradePanel {
             self.open = target;
         }
 
+        // SPIN YAY
         self.spin += dt * SPIN_SPEED;
     }
 

@@ -9,7 +9,7 @@ use nanorand::Rng;
 use paris::{error, info};
 use rustrict::CensorStr;
 use shared::packets::{
-    PACKET_SEED, TankOption, TankTreePacket,
+    PACKET_SEED, PlayerUpgradesPacket, TankOption, TankTreePacket,
     client_bound::{
         AddEntityPacket, BarrelDef, EntityType, LeaderboardPacket, PlayerStatsPacket,
         RemoveEntityPacket, UpdateEntityPacket, UpdateEntityPacketData,
@@ -43,23 +43,49 @@ pub enum GameEvents {
     PlayerAutoFire { id: u32, enabled: bool },
     PlayerAim { id: u32, dir: f32 },
     TankSelect { id: u32, tank_id: u32 },
+    StatUpgrade { id: u32, stat: u8 },
     TankTree { tree: TankTree },
     ChatMessage { id: u32, channel: u8, text: String },
 }
 
-const TANK_RADIUS: f32 = 20.0;
-const BULLET_RADIUS: f32 = 8.0;
-const BULLET_LIFETIME: f32 = 1.5;
-const MAX_LEVEL: u32 = 45;
-
 const MAP_BOUND: f32 = 2500.0;
-const MAX_SHAPES: usize = 1500;
-const BULLET_SUBSTEPS: u32 = 5;
+const MAX_SHAPES: usize = 2000;
+const BULLET_SUBSTEPS: u32 = 10;
 const ENTITY_COLLISION_QUERY_RADIUS: f32 = 80.0;
 
-const RECOIL_SCALE: f32 = 10.0;
+const TANK_RELOAD_TICKS: u64 = 1;
 
-const TANK_RELOAD_TICKS: u64 = 10;
+const MAX_LEVEL: u32 = 45;
+
+const BULLET_SPEED_MULT: f32 = 2.6;
+const BULLET_BASE_DAMAGE: f32 = 8.0;
+const BULLET_DMG_PER_LEVEL: f32 = 0.045;
+const BULLET_LIFETIME: f32 = 1.3;
+const BULLET_BASE_HEALTH: f32 = 10.0;
+
+const RECOIL_IMPULSE: f32 = 12.0;
+const RECOIL_DECAY: f32 = 2.0;
+const RECOIL_MAX: f32 = 400.0;
+
+const TANK_BASE_RADIUS: f32 = 21.0;
+const COLLISION_SLOP: f32 = 0.05;
+const COLLISION_CORRECTION: f32 = 0.9;
+
+const TANK_BODY_DPS: f32 = 30.0;
+const SQUARE_CONTACT_DPS: f32 = 10.0;
+const TRIANGLE_CONTACT_DPS: f32 = 18.0;
+const PENTAGON_CONTACT_DPS: f32 = 30.0;
+
+const STAT_MAX_LEVEL: u8 = 7;
+const STAT_MAX_HEALTH_BONUS: u32 = 40;
+const STAT_REGEN_BASE: f32 = 0.002;
+const STAT_REGEN_PER: f32 = 0.006;
+const STAT_BODY_DMG_PER: f32 = 0.5;
+const STAT_BULLET_SPEED_PER: f32 = 0.08;
+const STAT_BULLET_DMG_PER: f32 = 0.30;
+const STAT_BULLET_HP_PER: f32 = 0.5;
+const STAT_RELOAD_PER: f32 = 0.10;
+const STAT_MOVE_PER: f32 = 0.10;
 
 const MIN_UPGRADE_INTERVAL_MS: u64 = 250;
 const MIN_AIM_SAMPLES: usize = 16;
@@ -165,7 +191,6 @@ impl GameState {
                 self.broadcast_leaderboard();
             }
 
-            self.rebuild_spatial_hash();
             self.simulate_combat(dt);
 
             self.scripting.scheduler.on_tick();
@@ -241,6 +266,7 @@ impl GameState {
                 self.record_aim_sample(*id, *dir);
             }
             GameEvents::TankSelect { id, tank_id } => self.apply_tank_upgrade(*id, *tank_id),
+            GameEvents::StatUpgrade { id, stat } => self.apply_stat_upgrade(*id, *stat),
             GameEvents::TankTree { tree } => {
                 self.tank_tree = tree.clone();
 
@@ -267,6 +293,42 @@ impl GameState {
                 for (conn_id, entity_id) in updated {
                     self.broadcast_player_def(conn_id, entity_id);
                 }
+            }
+        }
+    }
+
+    fn apply_stat_upgrade(&mut self, conn_id: u32, stat: u8) {
+        let Some(&entity_id) = self.players.get(&conn_id) else {
+            return;
+        };
+        if stat as usize >= 8 {
+            return;
+        }
+
+        let mut leveled_max = None;
+        {
+            let mut entities = self.scripting.entities_mut();
+            let Some(t) = entities.tanks.get_mut(entity_id) else {
+                return;
+            };
+
+            if *t.stat_points == 0 || t.stat_levels[stat as usize] >= STAT_MAX_LEVEL {
+                return;
+            }
+
+            t.stat_levels[stat as usize] += 1;
+            *t.stat_points -= 1;
+
+            if stat == 1 {
+                *t.max_health += STAT_MAX_HEALTH_BONUS;
+                leveled_max = Some(*t.max_health);
+            }
+        }
+
+        if let Some(new_max) = leveled_max {
+            let mut entities = self.scripting.entities_mut();
+            if let Some(health) = entities.health_mut(entity_id) {
+                *health = (*health + STAT_MAX_HEALTH_BONUS).min(new_max);
             }
         }
     }
@@ -685,6 +747,10 @@ impl GameState {
     }
 
     fn regen_health(&mut self) {
+        if self.tick_count % 10 != 0 {
+            return;
+        }
+
         let mut entities = self.scripting.entities_mut();
         for i in 0..entities.alive.len() {
             if !entities.alive[i] {
@@ -694,13 +760,20 @@ impl GameState {
                 index: i,
                 generation: entities.generations[i],
             };
-            let max_health = entity_max_health(&entities, id);
+            let (max_health, regen) = match entities.tanks.get(id) {
+                Some(t) => (
+                    *t.max_health,
+                    (*t.max_health as f32
+                        * (STAT_REGEN_BASE + STAT_REGEN_PER * t.stat_levels[0] as f32))
+                        as u32,
+                ),
+                None => continue,
+            };
             let Some(health) = entities.health_mut(id) else {
                 continue;
             };
             if *health > 0 && *health < max_health {
-                // let regen_amount = (max_health / 10000).max(1);
-                // *health = (*health + regen_amount).min(max_health);
+                *health = (*health + regen.max(1)).min(max_health);
             }
         }
     }
@@ -728,16 +801,23 @@ impl GameState {
                 index: i,
                 generation: entities.generations[i],
             };
-            let tank_data = entities
-                .tanks
-                .get(id)
-                .map(|t| (*t.move_dir, *t.aim, *t.level, t.tank_type.speed));
+            let tank_data = entities.tanks.get(id).map(|t| {
+                (
+                    *t.move_dir,
+                    *t.aim,
+                    *t.level,
+                    t.tank_type.speed,
+                    *t.stat_levels,
+                )
+            });
             let health = entities.get(id).map(|e| *e.health).unwrap_or(0);
             let max_health = entity_max_health(&entities, id);
 
-            if let Some((move_dir, aim, level, speed_mult)) = tank_data {
-                let current_max_speed =
-                    self.config.player.speed * (1.0 + (level - 1) as f32 * 0.02) * speed_mult;
+            if let Some((move_dir, aim, level, speed_mult, stats)) = tank_data {
+                let current_max_speed = self.config.player.speed
+                    * (1.0 + (level - 1) as f32 * 0.02)
+                    * speed_mult
+                    * stat_mult(&stats, 7, STAT_MOVE_PER);
                 step_tank_velocity(&mut entities, i, move_dir, current_max_speed, dt);
                 clamp_tank_position(&mut entities, i);
 
@@ -756,7 +836,7 @@ impl GameState {
                     });
                 }
             } else if let Some(shape) = entities.shapes.get(id) {
-                let net_id = 0x80000000 | (i as u32);
+                let net_id = shape_net_id(i, entities.generations[i]);
                 let rot = *shape.rotation;
                 let kind = shape_kind_id(*shape.kind);
                 updates.push(UpdateEntityPacketData {
@@ -773,15 +853,15 @@ impl GameState {
             }
         }
 
-        for (net_id, pos) in entities.bullets.iter() {
+        for (net_id, pos, radius, recoil) in entities.bullets.iter() {
             updates.push(UpdateEntityPacketData {
                 id: net_id,
                 entity_type: EntityType::Bullet,
                 x: pos.x,
                 y: pos.y,
                 rot: 0.0,
-                scale: 1.0,
-                kind: 0,
+                scale: radius,
+                kind: recoil,
                 health: 1,
                 max_health: 1,
             });
@@ -806,6 +886,10 @@ impl GameState {
                 PACKET_SEED as u64,
             );
             self.connections.send_to(conn_id, packet);
+
+            let upgrades =
+                PlayerUpgradesPacket::new(*tank.stat_levels, *tank.stat_points, PACKET_SEED as u64);
+            self.connections.send_to(conn_id, upgrades);
         }
     }
 
@@ -840,6 +924,10 @@ impl GameState {
             self.spatial_hash
                 .insert(HashEntity::Entity(id), pos.x, pos.y);
         }
+        for (i, (_, pos, _, _)) in entities.bullets.iter().enumerate() {
+            self.spatial_hash
+                .insert(HashEntity::Bullet(i), pos.x, pos.y);
+        }
     }
 
     fn simulate_combat(&mut self, dt: f32) {
@@ -847,14 +935,19 @@ impl GameState {
         for _ in 0..BULLET_SUBSTEPS {
             self.fire_auto_weapons(sub_dt);
             self.scripting.entities_mut().bullets.tick(sub_dt);
+            self.rebuild_spatial_hash();
             self.resolve_bullet_collisions();
         }
     }
 
     fn resolve_entity_collisions(&mut self) {
+        let dt = 0.1; // tick rate; keep in sync with game_loop
+
         let mut entities = self.scripting.entities_mut();
 
-        let mut collidable: Vec<Option<(Vec2, f32, bool)>> = vec![None; entities.alive.len()];
+        // (position, radius, mass, is_tank, contact_dps)
+        let mut collidable: Vec<Option<(Vec2, f32, f32, bool, f32)>> =
+            vec![None; entities.alive.len()];
         for i in 0..entities.alive.len() {
             if !entities.alive[i] {
                 continue;
@@ -863,15 +956,32 @@ impl GameState {
                 index: i,
                 generation: entities.generations[i],
             };
-            if let Some((radius, is_tank)) = entity_collision_radius(&entities, id) {
-                collidable[i] = Some((entities.positions[i], radius, is_tank));
-            }
+            let Some((radius, is_tank)) = entity_collision_radius(&entities, id) else {
+                continue;
+            };
+            let (mass, dps) = if is_tank {
+                let t = entities.tanks.get(id).expect("checked above");
+                (
+                    radius * radius,
+                    TANK_BODY_DPS * stat_mult(t.stat_levels, 2, STAT_BODY_DMG_PER),
+                )
+            } else {
+                let kind = entities.shapes.get(id).map(|s| *s.kind);
+                let dps = match kind {
+                    Some(ShapeKind::Square) => SQUARE_CONTACT_DPS,
+                    Some(ShapeKind::Triangle) => TRIANGLE_CONTACT_DPS,
+                    Some(ShapeKind::Pentagon) => PENTAGON_CONTACT_DPS,
+                    None => continue,
+                };
+                (radius * radius * 0.5, dps)
+            };
+            collidable[i] = Some((entities.positions[i], radius, mass, is_tank, dps));
         }
 
-        let mut collision_hits: Vec<(EntityId, u32)> = Vec::new();
+        let mut hits: Vec<(EntityId, u32, Option<EntityId>)> = Vec::new();
 
         for i in 0..collidable.len() {
-            let Some((pos1, r1, is_tank1)) = collidable[i] else {
+            let Some((pos1, r1, m1, is_tank1, dps1)) = collidable[i] else {
                 continue;
             };
             let id1 = EntityId {
@@ -889,50 +999,63 @@ impl GameState {
                 if id2.index <= i {
                     continue;
                 }
-                let Some((pos2, r2, is_tank2)) = collidable[id2.index] else {
+                let Some((pos2, r2, m2, is_tank2, dps2)) = collidable[id2.index] else {
                     continue;
                 };
 
                 let delta = pos2 - pos1;
                 let dist = delta.length();
                 let min_dist = r1 + r2;
-                if dist >= min_dist || dist <= 0.0 {
+                if dist >= min_dist {
                     continue;
                 }
-                let push = min_dist - dist;
-                let dir = delta / dist;
+                let dir = if dist > 1e-4 {
+                    delta / dist
+                } else {
+                    Vec2::new(1.0, 0.0)
+                };
+                let overlap = min_dist - dist;
 
+                let inv1 = 1.0 / m1;
+                let inv2 = 1.0 / m2;
+                let corr =
+                    (overlap - COLLISION_SLOP).max(0.0) * COLLISION_CORRECTION / (inv1 + inv2);
+
+                if is_tank1 {
+                    entities.positions[i] -= dir * corr * inv1;
+                } else {
+                    entities.shapes.push_center(id1, -dir * corr * inv1);
+                }
+                if is_tank2 {
+                    entities.positions[id2.index] += dir * corr * inv2;
+                } else {
+                    entities.shapes.push_center(id2, dir * corr * inv2);
+                }
+
+                let dmg1 = ((dps1 * dt).round() as u32).max(1);
+                let dmg2 = ((dps2 * dt).round() as u32).max(1);
                 match (is_tank1, is_tank2) {
                     (true, true) => {
-                        entities.velocities[i] -= dir * push * 5.0;
-                        entities.velocities[id2.index] += dir * push * 5.0;
-                        collision_hits.push((id1, 2));
-                        collision_hits.push((id2, 2));
+                        hits.push((id1, dmg2, Some(id2)));
+                        hits.push((id2, dmg1, Some(id1)));
                     }
                     (true, false) => {
-                        entities.shapes.push_center(id2, dir * push * 0.5);
-                        let vel = entities.velocities[i];
-                        entities.velocities[i] -= dir * vel.dot(dir) * 2.0;
-                        collision_hits.push((id1, 1));
-                        collision_hits.push((id2, 15));
+                        hits.push((id1, dmg2, None));
+                        hits.push((id2, dmg1, Some(id1)));
                     }
                     (false, true) => {
-                        entities.shapes.push_center(id1, -dir * push * 0.5);
-                        let vel = entities.velocities[id2.index];
-                        entities.velocities[id2.index] -= -dir * vel.dot(-dir) * 2.0;
-                        collision_hits.push((id1, 15));
-                        collision_hits.push((id2, 1));
+                        hits.push((id1, dmg2, Some(id2)));
+                        hits.push((id2, dmg1, None));
                     }
                     (false, false) => {
-                        entities.shapes.push_center(id1, -dir * push * 0.25);
-                        entities.shapes.push_center(id2, dir * push * 0.25);
+                        // shapes never damage each other
                     }
                 }
             }
         }
         drop(entities);
 
-        if collision_hits.is_empty() {
+        if hits.is_empty() {
             return;
         }
 
@@ -940,7 +1063,7 @@ impl GameState {
             self.players.iter().map(|(&k, &v)| (v, k)).collect();
         let mut entities = self.scripting.entities_mut();
 
-        for (target_id, damage) in collision_hits {
+        for (target_id, damage, attacker) in hits {
             let died = {
                 let Some(health) = entities.health_mut(target_id) else {
                     continue;
@@ -949,23 +1072,42 @@ impl GameState {
                 *health = health.saturating_sub(damage);
                 was_alive && *health == 0
             };
-            if died {
-                broadcast_despawn(&self.connections, &mut entities, &entity_to_conn, target_id);
+            if !died {
+                continue;
             }
+
+            if let Some(attacker) = attacker {
+                let xp_gained = if entities.tanks.get(target_id).is_some() {
+                    entities.tanks.get(target_id).map(|t| t.xp.0 / 2)
+                } else {
+                    entities.shapes.get(target_id).map(|s| *s.xp_reward)
+                };
+                if let Some(xp) = xp_gained {
+                    grant_xp(&mut entities, attacker, xp);
+                }
+            }
+
+            broadcast_despawn(&self.connections, &mut entities, &entity_to_conn, target_id);
         }
     }
 
     fn resolve_bullet_collisions(&mut self) {
-        let hits: Vec<(usize, EntityId, u32, EntityId)> = {
+        let entity_hits: Vec<(usize, EntityId, u32, EntityId)> = {
             let entities = self.scripting.entities_mut();
             let mut hits = Vec::new();
-            for (bullet_index, pos, damage, owner) in entities.bullets.iter_indexed() {
-                let nearby = self.spatial_hash.get_nearby(pos.x, pos.y, 40.0);
+            for (bullet_index, pos, damage, bullet_radius, owner) in entities.bullets.iter_indexed()
+            {
+                let nearby = self
+                    .spatial_hash
+                    .get_nearby(pos.x, pos.y, 40.0 + bullet_radius);
                 for candidate in nearby {
                     let HashEntity::Entity(target_id) = candidate else {
                         continue;
                     };
                     if target_id == *owner {
+                        continue;
+                    }
+                    if entities.bullets.has_hit(bullet_index, target_id) {
                         continue;
                     }
                     let Some(target) = entities.get(target_id) else {
@@ -975,7 +1117,7 @@ impl GameState {
                     else {
                         continue;
                     };
-                    if pos.distance(*target.position) > target_radius + BULLET_RADIUS {
+                    if pos.distance(*target.position) > target_radius + bullet_radius {
                         continue;
                     }
                     hits.push((bullet_index, target_id, *damage, *owner));
@@ -985,49 +1127,105 @@ impl GameState {
             hits
         };
 
-        if hits.is_empty() {
-            return;
-        }
+        let mut spent: Vec<usize> = Vec::new();
 
-        let mut entities = self.scripting.entities_mut();
-        let entity_to_conn: HashMap<EntityId, u32> =
-            self.players.iter().map(|(&k, &v)| (v, k)).collect();
+        if !entity_hits.is_empty() {
+            let mut entities = self.scripting.entities_mut();
+            let entity_to_conn: HashMap<EntityId, u32> =
+                self.players.iter().map(|(&k, &v)| (v, k)).collect();
 
-        for (_, target_id, damage, owner) in &hits {
-            let died = {
-                let Some(health) = entities.health_mut(*target_id) else {
-                    continue;
+            for (bullet_index, target_id, damage, owner) in &entity_hits {
+                entities.bullets.record_hit(*bullet_index, *target_id);
+
+                let cost = entities.get(*target_id).map(|e| *e.health).unwrap_or(0) as f32;
+                if entities.bullets.damage(*bullet_index, cost) {
+                    spent.push(*bullet_index);
+                }
+
+                let died = {
+                    let Some(health) = entities.health_mut(*target_id) else {
+                        continue;
+                    };
+                    let was_alive = *health > 0;
+                    *health = health.saturating_sub(*damage);
+                    was_alive && *health == 0
                 };
-                let was_alive = *health > 0;
-                *health = health.saturating_sub(*damage);
-                was_alive && *health == 0
-            };
-            if !died {
-                continue;
-            }
 
-            let xp_gained = if let Some(tank) = entities.tanks.get(*target_id) {
-                Some(tank.xp.0 / 2)
-            } else {
-                entities.shapes.get(*target_id).map(|s| *s.xp_reward)
-            };
-            if let Some(xp_gained) = xp_gained {
-                grant_xp(&mut entities, *owner, xp_gained);
-            }
+                if died {
+                    let xp_gained = if let Some(tank) = entities.tanks.get(*target_id) {
+                        Some(tank.xp.0 / 2)
+                    } else {
+                        entities.shapes.get(*target_id).map(|s| *s.xp_reward)
+                    };
+                    if let Some(xp_gained) = xp_gained {
+                        grant_xp(&mut entities, *owner, xp_gained);
+                    }
 
-            broadcast_despawn(
-                &self.connections,
-                &mut entities,
-                &entity_to_conn,
-                *target_id,
-            );
+                    broadcast_despawn(
+                        &self.connections,
+                        &mut entities,
+                        &entity_to_conn,
+                        *target_id,
+                    );
+                }
+            }
         }
 
-        let mut spent: Vec<usize> = hits.iter().map(|(b, _, _, _)| *b).collect();
+        let bb_hits: Vec<(usize, usize)> = {
+            let entities = self.scripting.entities_mut();
+            let mut pairs = Vec::new();
+            for (i, pos, _damage, radius, _owner) in entities.bullets.iter_indexed() {
+                if spent.contains(&i) {
+                    continue;
+                }
+                let nearby = self.spatial_hash.get_nearby(pos.x, pos.y, radius + 12.0);
+                for candidate in nearby {
+                    let HashEntity::Bullet(j) = candidate else {
+                        continue;
+                    };
+                    if j <= i || spent.contains(&j) {
+                        continue;
+                    }
+                    if entities.bullets.owner(i) == entities.bullets.owner(j) {
+                        continue;
+                    }
+                    if pos.distance(entities.bullets.position(j))
+                        > radius + entities.bullets.radius_at(j)
+                    {
+                        continue;
+                    }
+                    pairs.push((i, j));
+                }
+            }
+            pairs
+        };
+
+        if !bb_hits.is_empty() {
+            let mut entities = self.scripting.entities_mut();
+            for (i, j) in bb_hits {
+                if spent.contains(&i) || spent.contains(&j) {
+                    continue;
+                }
+                let hp_i = entities.bullets.health(i);
+                let hp_j = entities.bullets.health(j);
+                let died_i = entities.bullets.damage(i, hp_j);
+                let died_j = entities.bullets.damage(j, hp_i);
+                if died_i {
+                    spent.push(i);
+                }
+                if died_j {
+                    spent.push(j);
+                }
+            }
+        }
+
         spent.sort_unstable_by(|a, b| b.cmp(a));
         spent.dedup();
-        for i in spent {
-            entities.bullets.remove(i);
+        if !spent.is_empty() {
+            let mut entities = self.scripting.entities_mut();
+            for i in spent {
+                entities.bullets.remove(i);
+            }
         }
     }
 
@@ -1067,7 +1265,7 @@ impl GameState {
                 orbit_speed,
             );
 
-            let net_id = 0x80000000 | (entity_id.index as u32);
+            let net_id = shape_net_id(entity_id.index, entity_id.generation);
             let packet = AddEntityPacket::new(
                 net_id,
                 EntityType::Shape,
@@ -1085,14 +1283,16 @@ impl GameState {
 
     fn fire_auto_weapons(&mut self, dt: f32) {
         let ids: Vec<EntityId> = self.players.values().copied().collect();
+        let entity_to_conn: HashMap<EntityId, u32> =
+            self.players.iter().map(|(&k, &v)| (v, k)).collect();
 
         let mut entities = self.scripting.entities_mut();
         let Entities {
             tanks,
             bullets,
             positions,
-            velocities,
             alive,
+            recoil_velocities,
             ..
         } = &mut *entities;
 
@@ -1112,9 +1312,19 @@ impl GameState {
 
             let auto_fire = *t.auto_fire;
             let aim = *t.aim;
-            let base_damage = *t.bullet_damage;
-            let base_speed = *t.bullet_speed;
-            let reload_time = *t.reload_time;
+            let level = *t.level;
+            let tank_scale = level_scale(level);
+            let stats = *t.stat_levels;
+            let reload_time = *t.reload_time / stat_mult(&stats, 6, STAT_RELOAD_PER);
+            let damage_mult = stat_mult(&stats, 5, STAT_BULLET_DMG_PER);
+            let speed_mult = stat_mult(&stats, 3, STAT_BULLET_SPEED_PER);
+            let hp_mult = stat_mult(&stats, 4, STAT_BULLET_HP_PER);
+
+            let base_damage =
+                BULLET_BASE_DAMAGE * (1.0 + BULLET_DMG_PER_LEVEL * (level - 1) as f32);
+            let base_speed = self.config.player.speed * BULLET_SPEED_MULT;
+
+            let owner_conn = entity_to_conn.get(&id).copied().unwrap_or(u32::MAX);
 
             for (i, barrel) in t.tank_type.barrels.iter().enumerate() {
                 let cycle = (reload_time * barrel.reload).max(0.05);
@@ -1125,7 +1335,11 @@ impl GameState {
                 }
 
                 if !auto_fire {
-                    t.barrel_timers[i] = phase;
+                    let timer = &mut t.barrel_timers[i];
+                    *timer -= dt;
+                    if *timer < phase {
+                        *timer = phase;
+                    }
                     continue;
                 }
 
@@ -1137,25 +1351,45 @@ impl GameState {
                 *timer += cycle;
 
                 let barrel_angle = barrel.angle.to_radians();
-                let muzzle_local =
-                    Vec2::new(barrel.x, barrel.y) + Vec2::from_angle(barrel_angle) * barrel.length;
+                let muzzle_local = (Vec2::new(barrel.x, barrel.y)
+                    + Vec2::from_angle(barrel_angle) * barrel.length)
+                    * tank_scale;
                 let world_angle = aim + barrel_angle;
                 let muzzle_world = position + Vec2::from_angle(aim).rotate(muzzle_local);
 
-                let damage = ((base_damage as f32 * barrel.bullet.damage).round() as u32).max(1);
-                let speed = base_speed * barrel.bullet.speed;
+                let radius = barrel.width * 0.5 * barrel.bullet.size_ratio * tank_scale;
+
+                let damage =
+                    ((base_damage * barrel.bullet.damage * damage_mult).round() as u32).max(1);
+                let speed = base_speed * barrel.bullet.speed * speed_mult;
                 let lifetime = BULLET_LIFETIME * barrel.bullet.life_length;
+                let health = BULLET_BASE_HEALTH * barrel.bullet.health * hp_mult;
+
+                let spawn_pos = muzzle_world + Vec2::from_angle(world_angle) * radius;
+
+                let recoil_info = if owner_conn == u32::MAX {
+                    0
+                } else {
+                    ((owner_conn & 0xffffff) << 8) | (i as u32 + 1)
+                };
 
                 bullets.spawn(
-                    muzzle_world,
+                    spawn_pos,
                     Vec2::from_angle(world_angle) * speed,
                     damage,
                     lifetime,
                     id,
+                    radius,
+                    health,
+                    recoil_info,
                 );
 
-                velocities[id.index] -=
-                    Vec2::from_angle(world_angle) * (barrel.recoil * RECOIL_SCALE);
+                recoil_velocities[id.index] -=
+                    Vec2::from_angle(world_angle) * (barrel.recoil * RECOIL_IMPULSE);
+                let recoil = recoil_velocities[id.index];
+                if recoil.length_squared() > RECOIL_MAX * RECOIL_MAX {
+                    recoil_velocities[id.index] = recoil.normalize_or_zero() * RECOIL_MAX;
+                }
             }
         }
     }
@@ -1186,6 +1420,24 @@ fn find_def(tree: &TankTree, id: u32) -> Option<(u32, &Tank)> {
     })
 }
 
+fn stat_mult(levels: &[u8; 8], idx: usize, per: f32) -> f32 {
+    1.0 + per * levels[idx] as f32
+}
+
+fn stat_points_for_level(level: u32) -> u32 {
+    if (2..=28).contains(&level) {
+        1
+    } else if (30..=45).contains(&level) && level % 3 == 0 {
+        1
+    } else {
+        0
+    }
+}
+
+fn shape_net_id(index: usize, generation: u32) -> u32 {
+    0x80000000 | ((generation & 0xfff) << 19) | ((index as u32) & 0x7ffff)
+}
+
 fn shape_max_health(kind: ShapeKind) -> u32 {
     match kind {
         ShapeKind::Square => 10,
@@ -1196,9 +1448,9 @@ fn shape_max_health(kind: ShapeKind) -> u32 {
 
 fn shape_radius(kind: ShapeKind) -> f32 {
     match kind {
-        ShapeKind::Square => 15.0,
-        ShapeKind::Triangle => 20.0,
-        ShapeKind::Pentagon => 35.0,
+        ShapeKind::Square => 16.0,
+        ShapeKind::Triangle => 16.0,
+        ShapeKind::Pentagon => 26.0,
     }
 }
 
@@ -1212,11 +1464,11 @@ fn shape_kind_id(kind: ShapeKind) -> u32 {
 
 fn random_shape_kind(roll: f32) -> (ShapeKind, f32, u32) {
     if roll < 0.75 {
-        (ShapeKind::Square, 0.05, 10)
+        (ShapeKind::Square, 0.35, 10)
     } else if roll < 0.95 {
-        (ShapeKind::Triangle, 0.07, 25)
+        (ShapeKind::Triangle, 0.5, 25)
     } else {
-        (ShapeKind::Pentagon, 0.03, 130)
+        (ShapeKind::Pentagon, 0.22, 130)
     }
 }
 
@@ -1230,14 +1482,16 @@ fn entity_max_health(entities: &Entities, id: EntityId) -> u32 {
 }
 
 fn entity_collision_radius(entities: &Entities, id: EntityId) -> Option<(f32, bool)> {
-    if entities.tanks.get(id).is_some() {
-        Some((TANK_RADIUS, true))
-    } else {
-        entities
-            .shapes
-            .get(id)
-            .map(|s| (shape_radius(*s.kind), false))
-    }
+    entities
+        .tanks
+        .get(id)
+        .map(|t| (TANK_BASE_RADIUS * level_scale(*t.level), true))
+        .or_else(|| {
+            entities
+                .shapes
+                .get(id)
+                .map(|s| (shape_radius(*s.kind), false))
+        })
 }
 
 fn net_id_for(
@@ -1251,7 +1505,7 @@ fn net_id_for(
             EntityType::Player,
         )
     } else {
-        (0x80000000 | (id.index as u32), EntityType::Shape)
+        (shape_net_id(id.index, id.generation), EntityType::Shape)
     }
 }
 
@@ -1280,9 +1534,8 @@ fn grant_xp(entities: &mut Entities, owner: EntityId, xp_gained: u32) {
         owner_tank.xp.0 -= owner_tank.xp.1;
         owner_tank.xp.1 = 1; //(owner_tank.xp.1 as f32 * 1.12).min(100000.0) as u32;
         *owner_tank.level += 1;
+        *owner_tank.stat_points += stat_points_for_level(*owner_tank.level);
         *owner_tank.max_health += 10;
-        *owner_tank.bullet_damage += 2;
-        *owner_tank.bullet_speed += 10.0;
         *owner_tank.reload_time = (*owner_tank.reload_time * 0.98).max(0.1);
     }
 
@@ -1330,6 +1583,12 @@ fn step_tank_velocity(
     entities.velocities[i] =
         entities.velocities[i].clamp(Vec2::splat(-max_speed), Vec2::splat(max_speed));
     entities.positions[i] += entities.velocities[i] * dt;
+
+    let recoil = entities.recoil_velocities[i];
+    if recoil.length_squared() > 1e-8 {
+        entities.positions[i] += recoil * dt;
+        entities.recoil_velocities[i] = recoil * (-RECOIL_DECAY * dt).exp();
+    }
 }
 
 fn clamp_tank_position(entities: &mut Entities, i: usize) {

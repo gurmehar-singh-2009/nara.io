@@ -32,6 +32,7 @@ pub struct ShapeRef<'a> {
     pub xp_reward: &'a u32,
 }
 
+#[allow(dead_code)]
 pub struct ShapeMut<'a> {
     pub kind: &'a mut ShapeKind,
     pub rotation: &'a mut f32,
@@ -138,6 +139,7 @@ impl Shapes {
         })
     }
 
+    #[allow(dead_code)]
     pub fn get_mut(&mut self, id: EntityId) -> Option<ShapeMut<'_>> {
         let slot = self.sparse.get(id.index).copied().flatten()?;
         if self.ids.get(slot).copied() != Some(id) {
@@ -173,6 +175,7 @@ impl Shapes {
         self.ids.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
     }

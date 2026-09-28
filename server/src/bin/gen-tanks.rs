@@ -106,6 +106,7 @@ struct JsonBarrel {
 
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct JsonBarrelFlags {
     is_trapezoid: bool,
     force_fire: bool,
@@ -145,6 +146,11 @@ struct JsonBullet {
     #[serde(default = "d_one")]
     size_ratio: f64,
 }
+
+// #[derive(Deserialize, Debug, Clone)]
+// pub struct JsonBulletFlags {
+//     #[serde(rename = "isTrapezoid", default = "d_flags")]
+// }
 
 #[derive(Deserialize, Debug, Clone)]
 struct JsonStat {
@@ -253,7 +259,8 @@ fn render_tank(tank: &JsonTank, upgrades: &[String]) -> String {
         tank.name
     ));
     out.push_str("-- units are game units (tank body = 42), angles are degrees.\n");
-    // out.push_str("-- the server hot-reloads this file within ~1 second of an edit.\n\n");
+    // out.push_str("-- the server hot-reloads this file within ~1 second of an
+    // edit.\n\n");
     out.push_str("return {\n");
     out.push_str(&format!("    id = {},\n", tank.id));
     out.push_str(&format!("    name = \"{}\",\n", tank.name));

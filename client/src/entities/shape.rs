@@ -26,6 +26,8 @@ pub struct Shape {
     pub render_health: f32,
     pub dying: bool,
     pub render_alpha: f32,
+    // 0 = hidden (full health)
+    pub health_bar_alpha: f32,
 }
 
 impl Shape {
@@ -53,6 +55,7 @@ impl Shape {
             render_health: max_health as f32,
             dying: false,
             render_alpha: 0.0,
+            health_bar_alpha: 0.0,
         }
     }
 

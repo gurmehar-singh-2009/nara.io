@@ -29,17 +29,17 @@ impl Connections {
         self.inner.remove(&id);
     }
 
-    pub fn contains(&self, id: u32) -> bool {
-        self.inner.contains_key(&id)
-    }
-
-    pub fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
+//     pub fn contains(&self, id: u32) -> bool {
+//         self.inner.contains_key(&id)
+//     }
+// 
+//     pub fn len(&self) -> usize {
+//         self.inner.len()
+//     }
+// 
+//     pub fn is_empty(&self) -> bool {
+//         self.inner.is_empty()
+//     }
 
     pub fn decrypt(&self, id: u32, ciphertext: &[u8]) -> Option<Result<Vec<u8>, ServerError>> {
         self.inner

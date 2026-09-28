@@ -9,6 +9,7 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
+    #[allow(dead_code)]
     pub fn start(
         &mut self,
         lua: &Lua,
