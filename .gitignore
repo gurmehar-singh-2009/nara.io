@@ -1,8 +1,14 @@
 server/server_key.bin
 client/public_key.bin
 
-target/
-/target
+target/debug
+target/flycheck0
+target/wasm-bindgen
+target/wasm-opt
+target/wasm32-unknown-unknown
+target/release/build
+target/release/examples
+target/release/incremental
 
 .env
 
