@@ -109,36 +109,36 @@ async fn main() -> Result<(), ServerError> {
     while let Ok((stream, addr)) = listener.accept().await {
         let client_ip = addr.ip();
 
-        if !client_ip.is_loopback() {
-            let ip = normalize_ip(&client_ip.to_string());
-            let mut is_bad_actor = false;
-
-            for provider in LookupProvider::all() {
-                if let Some(c) = &lookup(&ip, *provider) {
-                    is_bad_actor |= [
-                        c.connection.is_crawler,
-                        c.connection.is_datacenter,
-                        c.connection.is_vpn,
-                        c.connection.is_proxy,
-                        c.connection.is_tor,
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .any(|v| v);
-
-                    if is_bad_actor {
-                        break;
-                    }
-                }
-            }
-
-            // The IP check is unreliable and bugs when hosting on VM.
-            // Fix it later.
-            // if is_bad_actor {
-            //     error!("closed connection due to malicious ip: {}", ip);
-            //     continue;
-            // }
-        }
+        //         if !client_ip.is_loopback() {
+        //             let ip = normalize_ip(&client_ip.to_string());
+        //             let mut is_bad_actor = false;
+        //
+        //             for provider in LookupProvider::all() {
+        //                 if let Some(c) = &lookup(&ip, *provider) {
+        //                     is_bad_actor |= [
+        //                         c.connection.is_crawler,
+        //                         c.connection.is_datacenter,
+        //                         c.connection.is_vpn,
+        //                         c.connection.is_proxy,
+        //                         c.connection.is_tor,
+        //                     ]
+        //                     .into_iter()
+        //                     .flatten()
+        //                     .any(|v| v);
+        //
+        //                     if is_bad_actor {
+        //                         break;
+        //                     }
+        //                 }
+        //             }
+        //
+        //             // The IP check is unreliable and bugs when hosting on
+        // VM.             // Fix it later.
+        //             // if is_bad_actor {
+        //             //     error!("closed connection due to malicious ip:
+        // {}", ip);             //     continue;
+        //             // }
+        //         }
 
         let ws_stream = match accept_async_with_config(stream, Some(socket_config)).await {
             Ok(ws) => ws,
@@ -177,47 +177,49 @@ async fn main() -> Result<(), ServerError> {
 
         tokio::spawn(async move {
             // Create an authenticated connection instance.
-            let authenticated_connection = match read.next().await {
-                Some(Ok(msg)) => {
-                    println!("{}", msg);
-                    if !msg.is_binary() {
-                        log!("u aint even trying gng: {}", msg);
+            let authenticated_connection = loop {
+                let msg = match read.next().await {
+                    Some(Ok(msg)) => msg,
+                    _ => {
+                        log!("gng...");
                         return;
                     }
+                };
 
-                    let msg = msg.into_data();
+                println!("first: {:?}", msg);
 
-                    // println!("received {} bytes: {:02x?}", msg.len(), msg);
-
-                    let decoded = match HandshakePacket::decode(&msg) {
-                        Ok(data) => data,
-
-                        // Decoding should never fail, disconnect the client.
-                        Err(_) => {
-                            log!("couldnt decrypt ts");
-                            return;
-                        }
-                    };
-
-                    // We expect the first packet to be the handshake
-                    // initiation, otherwise we disconnect
-                    // the client. In the future soft ban the client based on
-                    // IP.
-                    match client_connection.respond_handshake(
-                        &PublicKey::from(<[u8; 32]>::try_from(&decoded.handshake[..32]).unwrap()),
-                        &signing_key,
-                    ) {
-                        Ok(conn) => conn,
-                        Err(_) => {
-                            log!("handshake failed");
-                            return;
-                        }
-                    }
+                if !msg.is_binary() {
+                    log!("u aint even trying gng: {}", msg);
+                    continue;
                 }
 
-                _ => {
-                    log!("gng...");
-                    return;
+                let msg = msg.into_data();
+
+                println!("received {} bytes: {:02x?}", msg.len(), msg);
+
+                let decoded = match HandshakePacket::decode(&msg) {
+                    Ok(data) => data,
+
+                    // Decoding should never fail, disconnect the client.
+                    Err(_) => {
+                        log!("couldnt decrypt ts");
+                        return;
+                    }
+                };
+
+                // We expect the first packet to be the handshake
+                // initiation, otherwise we disconnect
+                // the client. In the future soft ban the client based on
+                // IP.
+                match client_connection.respond_handshake(
+                    &PublicKey::from(<[u8; 32]>::try_from(&decoded.handshake[..32]).unwrap()),
+                    &signing_key,
+                ) {
+                    Ok(conn) => break conn,
+                    Err(_) => {
+                        log!("handshake failed");
+                        return;
+                    }
                 }
             };
 
