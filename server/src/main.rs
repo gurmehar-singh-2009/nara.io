@@ -181,7 +181,7 @@ async fn main() -> Result<(), ServerError> {
                 Some(Ok(msg)) => {
                     println!("{}", msg);
                     if !msg.is_binary() {
-                        log!("u aint even trying gng");
+                        log!("u aint even trying gng: {}", msg);
                         return;
                     }
 
