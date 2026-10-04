@@ -70,7 +70,7 @@ pub async fn start() {
         let game_state = Rc::clone(&game_state_for_socket);
 
         spawn_local(async move {
-            Socket::new(game_state, "ws://localhost:8080".into()).await;
+            Socket::new(game_state, "ws://naraioserver.hackclub.app".into()).await;
         });
     });
 
