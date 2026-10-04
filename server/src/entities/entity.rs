@@ -128,23 +128,49 @@ impl Entities {
 
     pub fn iter<'b>(&'b self) -> impl ParallelIterator<Item = EntityRef<'b>> {
         // #[rustfmt::skip]
-        (&self.generations, &self.alive, &self.positions, &self.velocities, &self.health)
+        (
+            &self.generations,
+            &self.alive,
+            &self.positions,
+            &self.velocities,
+            &self.health,
+        )
             .into_par_iter()
             .enumerate()
-            .map(|(index, (generation, alive, position, velocity, health))| {
-                EntityRef { index, generation, alive, position, velocity, health }
-            })
+            .map(
+                |(index, (generation, alive, position, velocity, health))| EntityRef {
+                    index,
+                    generation,
+                    alive,
+                    position,
+                    velocity,
+                    health,
+                },
+            )
     }
 
     pub fn iter_alive<'b>(&'b self) -> impl ParallelIterator<Item = EntityRef<'b>> {
         // #[rustfmt::skip]
-        (&self.generations, &self.alive, &self.positions, &self.velocities, &self.health)
+        (
+            &self.generations,
+            &self.alive,
+            &self.positions,
+            &self.velocities,
+            &self.health,
+        )
             .into_par_iter()
             .enumerate()
             .filter(|(_, (_, alive, _, _, _))| **alive)
-            .map(|(index, (generation, alive, position, velocity, health))| {
-                EntityRef { index, generation, alive, position, velocity, health }
-            })
+            .map(
+                |(index, (generation, alive, position, velocity, health))| EntityRef {
+                    index,
+                    generation,
+                    alive,
+                    position,
+                    velocity,
+                    health,
+                },
+            )
     }
 
     pub fn get(&self, id: EntityId) -> Option<EntityRef<'_>> {
@@ -180,14 +206,16 @@ impl Entities {
             .into_par_iter()
             .enumerate()
             .filter(|(_, (_, alive, _, _, _))| **alive)
-            .map(|(index, (generation, alive, position, velocity, health))| EntityMut {
-                index,
-                generation,
-                alive,
-                position,
-                velocity,
-                health,
-            })
+            .map(
+                |(index, (generation, alive, position, velocity, health))| EntityMut {
+                    index,
+                    generation,
+                    alive,
+                    position,
+                    velocity,
+                    health,
+                },
+            )
     }
 
     pub fn spawn(&mut self, position: Vec2, velocity: Vec2, health: u32) -> EntityId {

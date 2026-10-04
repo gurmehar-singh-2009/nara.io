@@ -24,6 +24,21 @@
                 box-sizing: border-box;
             }
 
+            .death-notice {
+                background: #3a2222;
+                border: 1px solid #7a4444;
+                border-radius: 6px;
+                padding: 10px 14px;
+                text-align: center;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+                animation: dropdownFade 0.15s ease-out;
+            }
+            .death-notice .death-title { color: #e08a8a; font-weight: 800; font-size: 0.95rem; }
+            .death-notice .death-sub { color: #c9a0a0; font-size: 0.78rem; font-weight: 600; margin-top: 2px; }
+            body.light-theme .death-notice { background: #f7e3e3; border-color: #d8a8a8; }
+            body.light-theme .death-notice .death-title { color: #a04040; }
+            body.light-theme .death-notice .death-sub { color: #8a5555; }
+
             body {
                 font-family: "Ubuntu", sans-serif;
                 background-color: #1a1a1a;
@@ -1287,6 +1302,11 @@
                 <div
                     class="flex flex-col items-center gap-2.5 w-full max-w-[310px]"
                 >
+                    <div id="deathNotice" class="death-notice w-full" style="display: none;">
+                        <div class="death-title"><i class="fa-solid fa-skull mr-1.5"></i>You were destroyed!</div>
+                        <div class="death-sub">Enter a nickname and hit Play to respawn.</div>
+                    </div>
+
                     <input
                         type="text"
                         id="nameInput"
@@ -1366,7 +1386,6 @@
         </div>
 
         <script>
-            // All JavaScript functions remain the same
             function openDrawer() {
                 document.getElementById("optionsDrawer").classList.add("open");
                 document
@@ -1489,7 +1508,6 @@
             }
             requestAnimationFrame(animate);
 
-            // ========== DARK / LIGHT THEME TOGGLE ==========
             function toggleTheme() {
                 const toggle = document.getElementById("darkThemeToggle");
                 const isDark = toggle.checked;
@@ -1517,7 +1535,6 @@
                 }
             }
 
-            // Initialize theme from localStorage
             (function initTheme() {
                 const savedTheme = localStorage.getItem("diep10-theme");
                 const toggle = document.getElementById("darkThemeToggle");
@@ -1531,6 +1548,25 @@
                     updateThemeIcon(true);
                 }
             })();
+
+                    const nameInput = document.getElementById("nameInput");
+                    const playButton = document.getElementById("playButton");
+
+                    nameInput.addEventListener("keydown", (e) => {
+                        if (e.key === "Enter") {
+                            e.preventDefault();
+                            playButton.click();
+                        }
+                    });
+
+                    const saved = localStorage.getItem("nara.nickname");
+                    if (saved) nameInput.value = saved;
+                    playButton.addEventListener("click", () => {
+                        const v = nameInput.value.trim();
+                        if (v) localStorage.setItem("nara.nickname", v);
+                    });
+
+                    nameInput.focus();
         </script>
     </body>
 </html>

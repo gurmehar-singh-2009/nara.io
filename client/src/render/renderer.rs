@@ -387,7 +387,7 @@ impl RenderState {
         level_bar_buffer.set_text("", &bold_attrs(), Shaping::Basic, None);
         level_bar_buffer.shape_until_scroll(&mut font_system, false);
 
-        let mut debug_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(14.0, 17.0));
+        let mut debug_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(26.0, 30.0));
         debug_buffer.set_size(Some(physical_width as f32), Some(physical_height as f32));
         debug_buffer.set_text(
             "",
@@ -928,7 +928,7 @@ impl RenderState {
                     w = w.max(run.line_w);
                 }
                 let left = screen_w - 20.0 - w;
-                let top = 14.0;
+                let top = screen_h / 2.0;
 
                 for (dx, dy) in OUTLINE_DIRS {
                     text_areas.push(TextArea {
@@ -958,7 +958,7 @@ impl RenderState {
                         right: self.config.width as i32,
                         bottom: self.config.height as i32,
                     },
-                    default_color: Color::rgba(200, 220, 255, 255),
+                    default_color: Color::rgba(0, 0, 0, 255),
                     custom_glyphs: &[],
                 });
             }
@@ -1142,9 +1142,7 @@ impl Renderer {
         (now, dt)
     }
 
-    fn log_stats(state: &mut RenderState, game: &GameState, now: f64) {
-
-    }
+    fn log_stats(state: &mut RenderState, game: &GameState, now: f64) {}
 
     fn advance_entities(state: &mut RenderState, game: &mut GameState, now: f64, dt: f32) {
         game.tick_render(dt);

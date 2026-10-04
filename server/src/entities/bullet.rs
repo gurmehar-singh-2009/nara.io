@@ -1,7 +1,6 @@
 #![allow(dead_code)] // figure out later
 
 use glam::Vec2;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::entities::entity::EntityId;
 
@@ -88,16 +87,10 @@ impl Bullets {
     }
 
     pub fn tick(&mut self, dt: f32) {
-        (
-            &mut self.positions,
-            &mut self.velocities,
-            &mut self.lifetimes,
-        )
-            .into_par_iter()
-            .for_each(|(pos, vel, life)| {
-                *pos += *vel * dt;
-                *life -= dt;
-            });
+        for i in 0..self.positions.len() {
+            self.positions[i] += self.velocities[i] * dt;
+            self.lifetimes[i] -= dt;
+        }
 
         let mut i = 0;
         while i < self.lifetimes.len() {
@@ -144,6 +137,14 @@ impl Bullets {
 
     pub fn position(&self, i: usize) -> Vec2 {
         self.positions.get(i).copied().unwrap_or(Vec2::ZERO)
+    }
+
+    pub fn velocity_at(&self, i: usize) -> Vec2 {
+        self.velocities.get(i).copied().unwrap_or(Vec2::ZERO)
+    }
+
+    pub fn damage_at(&self, i: usize) -> u32 {
+        self.damages.get(i).copied().unwrap_or(0)
     }
 
     pub fn radius_at(&self, i: usize) -> f32 {

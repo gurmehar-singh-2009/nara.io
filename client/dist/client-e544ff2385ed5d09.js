@@ -984,6 +984,16 @@ function __wbg_get_imports(memory) {
             const ret = result;
             return ret;
         },
+        __wbg_instanceof_HtmlElement_4493a09212d3586f: function(arg0) {
+            let result;
+            try {
+                result = arg0 instanceof HTMLElement;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
+            return ret;
+        },
         __wbg_instanceof_HtmlInputElement_ad3be04339d0e4df: function(arg0) {
             let result;
             try {
@@ -1869,6 +1879,9 @@ function __wbg_get_imports(memory) {
         },
         __wbg_set_height_bbeef8f354041577: function(arg0, arg1) {
             arg0.height = arg1 >>> 0;
+        },
+        __wbg_set_innerText_847403b9d4f38f77: function(arg0, arg1, arg2) {
+            arg0.innerText = getStringFromWasm0(arg1, arg2);
         },
         __wbg_set_label_08d9be3e4719c226: function(arg0, arg1, arg2) {
             arg0.label = getStringFromWasm0(arg1, arg2);

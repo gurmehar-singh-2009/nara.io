@@ -272,24 +272,19 @@ impl Socket {
                                     let mut game = game_for_reader.borrow_mut();
                                     match data.entity_type {
                                         EntityType::Player => {
-                                            if let Some(existing) =
-                                                game.players.iter_mut().find(|p| p.id == data.id)
-                                            {
-                                                existing.scale = level_scale(data.level);
-                                                existing.barrels = data.barrels.clone();
-                                            } else {
-                                                let mut entity = Tank::new(
-                                                    data.id,
-                                                    data.name,
-                                                    Vec2::from_array([data.x, data.y]),
-                                                );
-                                                entity.scale = level_scale(data.level);
-                                                entity.barrels = data.barrels.clone();
-                                                if data.is_entity_mine {
-                                                    game.my_player_id = Some(data.id);
-                                                }
-                                                game.players.push(entity);
+                                            game.players.retain(|p| p.id != data.id);
+                                            let mut entity = Tank::new(
+                                                data.id,
+                                                data.name,
+                                                Vec2::from_array([data.x, data.y]),
+                                            );
+                                            entity.scale = level_scale(data.level);
+                                            entity.barrels = data.barrels.clone();
+                                            entity.is_mine = data.is_entity_mine;
+                                            if data.is_entity_mine {
+                                                game.my_player_id = Some(data.id);
                                             }
+                                            game.players.push(entity);
                                         }
                                         EntityType::Shape => {
                                             game.shapes.retain(|s| s.id != data.id);
@@ -306,6 +301,11 @@ impl Socket {
                                         }
                                     }
                                     drop(game);
+
+                                    if data.is_entity_mine {
+                                        show_game_view();
+                                        show_death_notice(false);
+                                    }
                                 }
                                 Err(e) => {
                                     web_sys::console::error_1(
@@ -328,11 +328,25 @@ impl Socket {
                                                     .iter_mut()
                                                     .find(|b| b.id == entry.id)
                                                 {
+                                                    let dt = (current_time
+                                                        - bullet.last_update_time)
+                                                        .max(30.0)
+                                                        as f32
+                                                        / 1000.0 as f32;
+                                                    let v = (glam::Vec2::new(entry.x, entry.y)
+                                                        - bullet.pos)
+                                                        / dt;
+                                                    bullet.vel = if v.length() > 1500.0 {
+                                                        v.normalize_or_zero() * 1500.0
+                                                    } else {
+                                                        v
+                                                    };
+
                                                     bullet.last_pos = bullet.pos;
                                                     bullet.pos = glam::Vec2::new(entry.x, entry.y);
                                                     bullet.rot = entry.rot;
                                                     bullet.last_update_time = current_time;
-                                                    // bullet.dying = false;
+                                                    bullet.dying = false;
                                                     if entry.scale > 2.0 {
                                                         bullet.radius = entry.scale;
                                                     }
@@ -342,11 +356,15 @@ impl Socket {
                                                             entry.id, entry.x, entry.y,
                                                         );
                                                     new_bullet.last_update_time = current_time;
-                                                    // new_bullet.dying = false;
+                                                    new_bullet.dying = false;
                                                     if entry.scale > 2.0 {
                                                         new_bullet.radius = entry.scale;
                                                     }
                                                     new_bullet.recoil = entry.kind;
+                                                    new_bullet.is_mine = bullet_owner_is_mine(
+                                                        entry.kind,
+                                                        game.my_player_id,
+                                                    );
                                                     game.bullets.push(new_bullet);
                                                 }
                                             }
@@ -369,6 +387,8 @@ impl Socket {
                                                             entry.id, entry.x, entry.y, entry.kind,
                                                         );
                                                     new_shape.last_update_time = current_time;
+                                                    new_shape.health = entry.health;
+                                                    new_shape.max_health = entry.max_health;
                                                     game.shapes.push(new_shape);
                                                 }
                                             }
@@ -605,21 +625,15 @@ impl Socket {
 
                                     if is_my_player {
                                         game.my_player_id = None;
+                                        game.auto_fire = false;
                                         game.class_upgrades_available = false;
-                                        if let Some(window) = web_sys::window() {
-                                            if let Some(document) = window.document() {
-                                                if let Some(menu) =
-                                                    document.get_element_by_id("uiOverlay")
-                                                {
-                                                    let _ = menu
-                                                        .set_attribute("style", "display: block;");
-                                                }
-                                            }
-                                        }
                                     }
                                     drop(game);
+                                    last_auto_fire = false;
 
                                     if is_my_player {
+                                        show_home_screen();
+                                        show_death_notice(true);
                                         tank_upgrades::push_tank_options(Vec::new());
                                     }
                                 }
@@ -713,5 +727,51 @@ impl Socket {
         });
 
         Self { secret_key }
+    }
+}
+
+fn bullet_owner_is_mine(owner_info: u32, my_id: Option<u32>) -> bool {
+    if owner_info == 0 || owner_info & 0x8000_0000 != 0 {
+        return false;
+    }
+    Some(owner_info >> 8) == my_id
+}
+
+fn set_display(id: &str, display: &str) {
+    if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+        if let Some(el) = document.get_element_by_id(id) {
+            let _ = el.set_attribute("style", &format!("display: {display};"));
+        }
+    }
+}
+
+fn show_home_screen() {
+    set_display("gameCanvas", "none");
+    set_display("uiOverlay", "flex");
+}
+
+fn show_game_view() {
+    set_display("gameCanvas", "block");
+    set_display("uiOverlay", "none");
+}
+
+fn show_death_notice(visible: bool) {
+    if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+        if let Some(el) = document.get_element_by_id("deathNotice") {
+            let _ = el.set_attribute(
+                "style",
+                if visible {
+                    "display: block;"
+                } else {
+                    "display: none;"
+                },
+            );
+        }
+        if let Some(btn) = document
+            .get_element_by_id("playButton")
+            .and_then(|b| b.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            btn.set_inner_text(if visible { "Respawn" } else { "Play" });
+        }
     }
 }

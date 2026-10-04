@@ -13,6 +13,8 @@ const FADE_OUT: f32 = 0.30;
 const RECOIL_KICK_FRAC: f32 = 0.18;
 const RECOIL_TIME: f32 = 0.12;
 
+const TEAM_BLUE: [f32; 4] = [0.22, 0.55, 0.98, 1.0];
+
 pub struct Tank {
     pub id: u32,
     pub name: String,
@@ -34,6 +36,8 @@ pub struct Tank {
 
     pub render_health: f32,
     pub health_bar_alpha: f32,
+
+    pub is_mine: bool,
 
     pub dying: bool,
     pub render_alpha: f32,
@@ -65,6 +69,8 @@ impl Tank {
 
             render_health: 100.0,
             health_bar_alpha: 0.0,
+
+            is_mine: false,
 
             dying: false,
             render_alpha: 0.0,
@@ -133,14 +139,21 @@ impl Entity for Tank {
 
         let size = 42.0 * self.scale;
 
+        let body_fill = if self.is_mine {
+            TEAM_BLUE
+        } else {
+            DARK_THEME.team_red
+        };
+        let body_outline = DARK_THEME.outline_for(body_fill);
+
         instances.push(EntityInstance {
             position: [self.render_pos.x, self.render_pos.y],
             size: [size, size],
             rotation: self.render_rot,
             shape_type: 0,
             sides: 0,
-            fill_color: with_alpha(DARK_THEME.tank_body, self.render_alpha),
-            border_color: with_alpha(DARK_THEME.tank_outline, self.render_alpha),
+            fill_color: with_alpha(body_fill, self.render_alpha),
+            border_color: with_alpha(body_outline, self.render_alpha),
             border_thickness: 3.0 * self.scale,
             extra_param: 1.0,
         });

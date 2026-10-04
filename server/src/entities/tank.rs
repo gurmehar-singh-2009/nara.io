@@ -23,10 +23,7 @@ pub struct Tanks {
     reload_times: Vec<f32>,
     barrels: Vec<Vec<BarrelDef>>,
     barrel_timers: Vec<Vec<f32>>,
-    /// per-tank stat upgrade levels (index order matches the client's
-    /// upgrade panel rows)
     stat_levels: Vec<[u8; 8]>,
-    /// unspent stat upgrade points
     stat_points: Vec<u32>,
     upgrade_offered: Vec<Option<u32>>,
     sparse: Vec<Option<usize>>,

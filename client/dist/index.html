@@ -16,8 +16,8 @@
 
         
 <script type="module">
-import init, * as bindings from '/client-be320a376b1f43ba.js';
-const wasm = await init({ module_or_path: '/client-be320a376b1f43ba_bg.wasm' });
+import init, * as bindings from '/client-e544ff2385ed5d09.js';
+const wasm = await init({ module_or_path: '/client-e544ff2385ed5d09_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -34,6 +34,21 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
             * {
                 box-sizing: border-box;
             }
+
+            .death-notice {
+                background: #3a2222;
+                border: 1px solid #7a4444;
+                border-radius: 6px;
+                padding: 10px 14px;
+                text-align: center;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+                animation: dropdownFade 0.15s ease-out;
+            }
+            .death-notice .death-title { color: #e08a8a; font-weight: 800; font-size: 0.95rem; }
+            .death-notice .death-sub { color: #c9a0a0; font-size: 0.78rem; font-weight: 600; margin-top: 2px; }
+            body.light-theme .death-notice { background: #f7e3e3; border-color: #d8a8a8; }
+            body.light-theme .death-notice .death-title { color: #a04040; }
+            body.light-theme .death-notice .death-sub { color: #8a5555; }
 
             body {
                 font-family: "Ubuntu", sans-serif;
@@ -851,7 +866,7 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #555555 !important;
             }
         </style>
-    <link rel="modulepreload" href="/client-be320a376b1f43ba.js" crossorigin="anonymous" integrity="sha384-0QvGkIMnPm4n/tb1OztfIWiQBvI35mt5hxEMHtGmGiSTGAggbUw/dkDSuuD8jv3U"><link rel="preload" href="/client-be320a376b1f43ba_bg.wasm" crossorigin="anonymous" integrity="sha384-9JUGHuVjvv17ibD9b+KEvd9QeiUJIOt3st58D1EtsodeKbKMw9PsB1YoC2sMOvno" as="fetch" type="application/wasm"></head>
+    <link rel="modulepreload" href="/client-e544ff2385ed5d09.js" crossorigin="anonymous" integrity="sha384-dFyhnpJC/332k/kPtk8tjzQi30PAYmUNlK/MThwifM/LRpBF+xqWtGE1TWnhQgmu"><link rel="preload" href="/client-e544ff2385ed5d09_bg.wasm" crossorigin="anonymous" integrity="sha384-479Q8iW7Bn8Ho9Q+BsfouhPxm+1RYocO0sn7sHFlYm1Uml2maOoROFejaIXA6ZvM" as="fetch" type="application/wasm"></head>
     <body
         class="h-screen w-screen relative flex flex-col justify-between p-3 overflow-hidden"
     >
@@ -1298,6 +1313,11 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 <div
                     class="flex flex-col items-center gap-2.5 w-full max-w-[310px]"
                 >
+                    <div id="deathNotice" class="death-notice w-full" style="display: none;">
+                        <div class="death-title"><i class="fa-solid fa-skull mr-1.5"></i>You were destroyed!</div>
+                        <div class="death-sub">Enter a nickname and hit Play to respawn.</div>
+                    </div>
+
                     <input
                         type="text"
                         id="nameInput"
@@ -1377,7 +1397,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
         </div>
 
         <script>
-            // All JavaScript functions remain the same
             function openDrawer() {
                 document.getElementById("optionsDrawer").classList.add("open");
                 document
@@ -1500,7 +1519,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
             }
             requestAnimationFrame(animate);
 
-            // ========== DARK / LIGHT THEME TOGGLE ==========
             function toggleTheme() {
                 const toggle = document.getElementById("darkThemeToggle");
                 const isDark = toggle.checked;
@@ -1528,7 +1546,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 }
             }
 
-            // Initialize theme from localStorage
             (function initTheme() {
                 const savedTheme = localStorage.getItem("diep10-theme");
                 const toggle = document.getElementById("darkThemeToggle");
@@ -1542,6 +1559,25 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                     updateThemeIcon(true);
                 }
             })();
+
+                    const nameInput = document.getElementById("nameInput");
+                    const playButton = document.getElementById("playButton");
+
+                    nameInput.addEventListener("keydown", (e) => {
+                        if (e.key === "Enter") {
+                            e.preventDefault();
+                            playButton.click();
+                        }
+                    });
+
+                    const saved = localStorage.getItem("nara.nickname");
+                    if (saved) nameInput.value = saved;
+                    playButton.addEventListener("click", () => {
+                        const v = nameInput.value.trim();
+                        if (v) localStorage.setItem("nara.nickname", v);
+                    });
+
+                    nameInput.focus();
         </script>
     <script>"use strict";
 

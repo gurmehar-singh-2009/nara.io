@@ -10,7 +10,7 @@ pub struct SpatialHash {
     buckets: Vec<Vec<HashEntity>>,
 }
 
-const CELL_SIZE: f32 = 32.;
+const CELL_SIZE: f32 = 256.;
 const TABLE_SIZE: usize = 2048; // MUST be a power of 2.
 
 impl SpatialHash {
@@ -33,20 +33,25 @@ impl SpatialHash {
         self.buckets[index].push(entity);
     }
 
-    pub fn get_nearby(&self, x: f32, y: f32, radius: f32) -> Vec<HashEntity> {
+    pub fn get_nearby_into(&self, buf: &mut Vec<HashEntity>, x: f32, y: f32, radius: f32) {
+        buf.clear();
         let min_x = ((x - radius) / CELL_SIZE).floor() as i32;
         let max_x = ((x + radius) / CELL_SIZE).floor() as i32;
         let min_y = ((y - radius) / CELL_SIZE).floor() as i32;
         let max_y = ((y + radius) / CELL_SIZE).floor() as i32;
 
-        let mut nearby = Vec::with_capacity(32);
         for cx in min_x..=max_x {
             for cy in min_y..=max_y {
                 let index = self.hash_cell(cx, cy);
-                nearby.extend_from_slice(&self.buckets[index]);
+                buf.extend_from_slice(&self.buckets[index]);
             }
         }
-        nearby
+    }
+
+    pub fn get_nearby(&self, x: f32, y: f32, radius: f32) -> Vec<HashEntity> {
+        let mut buf = Vec::with_capacity(32);
+        self.get_nearby_into(&mut buf, x, y, radius);
+        buf
     }
 
     pub fn clear(&mut self) {
