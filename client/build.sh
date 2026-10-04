@@ -1,49 +1,47 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 echo "=========================================="
 echo " 1. Building release binaries via Trunk..."
 echo "=========================================="
+
 trunk build --release
 
 DIST_DIR="./dist"
 
-if ! command -v wasm-snip &> /dev/null; then
-    echo "Error: wasm-snip is not installed. Run: cargo install wasm-snip"
-    exit 1
-fi
-
-if ! command -v wasm-opt &> /dev/null; then
-    echo "Error: wasm-opt is not installed. Please install Binaryen."
+if ! command -v wasm-opt &>/dev/null; then
+    echo "Error: wasm-opt is not installed."
+    echo "Please install Binaryen."
     exit 1
 fi
 
 echo "=========================================="
-echo " 2. Snapping panic code & Optimizing WASM..."
+echo " 2. Optimizing WASM..."
 echo "=========================================="
 
 for WASM_FILE in "$DIST_DIR"/*.wasm; do
-    if [ -f "$WASM_FILE" ]; then
-        echo "Processing: $WASM_FILE"
+    [ -f "$WASM_FILE" ] || continue
 
-        wasm-snip --pattern ".*panic.*" "$WASM_FILE" -o "$WASM_FILE.snipped"
-        wasm-snip --pattern ".*core::fmt.*" "$WASM_FILE.snipped" -o "$WASM_FILE.snipped"
+    echo "Processing: $WASM_FILE"
 
-        wasm-opt -Oz \
-            --strip-debug \
-            --strip-dwarf \
-            --strip-producers \
-            --coalesce-locals \
-            --reroute-calls \
-            "$WASM_FILE.snipped" -o "$WASM_FILE"
+    TEMP_FILE="${WASM_FILE}.tmp"
 
-        rm "$WASM_FILE.snipped"
+    wasm-opt \
+        -O1 \
+        --strip-debug \
+        --strip-dwarf \
+        --strip-producers \
+        # --coalesce-locals \
+        # --reroute-calls \
+        "$WASM_FILE" \
+        -o "$TEMP_FILE"
 
-        echo "Successfully optimized: $WASM_FILE"
-    fi
+    mv "$TEMP_FILE" "$WASM_FILE"
+
+    echo "Successfully optimized: $WASM_FILE"
 done
 
 echo "=========================================="
-echo " Build & Obfuscation Complete!"
+echo " Build & Optimization Complete!"
 echo " Artifacts ready in: $DIST_DIR"
 echo "=========================================="
