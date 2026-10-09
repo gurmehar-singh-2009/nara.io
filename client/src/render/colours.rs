@@ -233,7 +233,7 @@ impl DiepTheme {
     }
 }
 
-pub const LIGHT_MODE: bool = true;
+pub const LIGHT_MODE: bool = false;
 
 pub const DARK_THEME: DiepTheme = DiepTheme::active();
 pub const DEFAULT_THEME: DiepTheme = DiepTheme::active();
