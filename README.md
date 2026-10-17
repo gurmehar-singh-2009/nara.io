@@ -117,3 +117,12 @@ Below is a list I will keep updated with what files I have used AI in:
 
 - /client/src/render/shader/fragment.wgsl
 - /client/bin/ - Not technically in use, experimentation.
+
+
+# Screenshots
+## Homescreen
+<img width="1920" height="937" alt="image" src="https://github.com/user-attachments/assets/e9a8bb48-dac9-4561-881a-24a86728237d" />
+<img width="1920" height="931" alt="image" src="https://github.com/user-attachments/assets/06827095-90b6-4dd1-a951-4ba5a03214b0" />
+
+## In game
+<img width="1920" height="931" alt="image" src="https://github.com/user-attachments/assets/3e4540b5-b792-462c-bafe-deaa9bc09907" />
