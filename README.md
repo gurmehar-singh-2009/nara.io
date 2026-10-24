@@ -115,7 +115,7 @@ I refuse to use it for anything else, since I want to use this project as a lear
 However, I did use it to debug certain sections of my code.
 Below is a list I will keep updated with what files I have used AI in:
 
-- /client/src/render/shader/fragment.wgsl
+- /client/src/render/shader/fragment.wgsl - originally written myself, used ai to optimize it for bad devices.
 - /client/bin/ - Not technically in use, experimentation.
 
 

@@ -24,6 +24,98 @@ struct VertexOutput {
 };
 
 const PI: f32 = 3.14159265359;
+const HALF_PI: f32 = 1.57079632679;
+const TAU: f32 = 6.28318530718;
+const INV_TAU: f32 = 0.15915494309;
+const MIN_ALPHA: f32 = 0.001;
+const MIN_AA: f32 = 2e-5; // floor for AA widths so reciprocals stay finite
+
+// Shape type ids
+const SHAPE_CIRCLE: u32 = 0u;
+const SHAPE_BOX: u32 = 1u;
+const SHAPE_GRID: u32 = 2u;
+const SHAPE_POLYGON: u32 = 3u;
+const SHAPE_ROUNDED: u32 = 4u;
+const SHAPE_UI_PILL: u32 = 5u;
+const SHAPE_UI_CIRCLE: u32 = 6u;
+const SHAPE_UI_ROUNDED: u32 = 7u;
+
+// ---------------------------------------------------------------------------
+// Cheap math helpers
+// ---------------------------------------------------------------------------
+
+// Hermite curve, same shape as smoothstep() but takes an already-normalised t.
+fn hermite(t: f32) -> f32 {
+    return t * t * (3.0 - 2.0 * t);
+}
+
+// cos(x) for |x| <= ~1.1 rad (the polygon sector range, max pi/3).
+// Taylor to x^8, error < 5e-7 over that range. No range reduction needed.
+fn cos_small(x: f32) -> f32 {
+    let u = x * x;
+    return 1.0 + u * (-0.5 + u * (0.0416666667 + u * (-0.00138888889 + u * 0.0000248015873)));
+}
+
+// atan2 with one divide and a 5-term polynomial (Abramowitz & Stegun 4.4.49),
+// max error ~1e-5 rad. Branch-free.
+fn fast_atan2(y: f32, x: f32) -> f32 {
+    let ax = abs(x);
+    let ay = abs(y);
+    let a = min(ax, ay) / max(max(ax, ay), 1e-20);
+    let s = a * a;
+    var r = (((0.0208351 * s - 0.0851330) * s + 0.1801410) * s - 0.3302995) * s + 0.9998660;
+    r = r * a;
+    r = select(r, HALF_PI - r, ay > ax);
+    r = select(r, PI - r, x < 0.0);
+    return select(r, -r, y < 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// Shared coverage + crisp border path
+// ---------------------------------------------------------------------------
+// `dist`: signed distance, edge at 0, negative inside.
+// `aa`: AA half-width, `thickness`: border width (same units as dist).
+// Math is identical to the smoothstep version, but the divides are done
+// once and shared: in the common case (thickness >= aa) the border smoothstep
+// has exactly twice the slope of the edge one, so it reuses the same
+// reciprocal. That's 1 reciprocal per pixel instead of 2.
+fn shade(
+    dist: f32,
+    aa: f32,
+    thickness: f32,
+    fill: vec4<f32>,
+    border: vec4<f32>,
+) -> vec4<f32> {
+    let w = max(aa, MIN_AA);
+    let inv_w = 1.0 / w;
+
+    // alpha = 1 - smoothstep(-aa, aa, dist)
+    let alpha = 1.0 - hermite(saturate(dist * (0.5 * inv_w) + 0.5));
+    if (alpha < MIN_ALPHA) {
+        discard;
+    }
+
+    // border_mix = smoothstep(-t - baa, -t + baa, dist), baa = max(min(aa, t) * 0.5, 1e-5)
+    var inv_b = inv_w;
+    if (thickness < w) {
+        inv_b = 1.0 / max(thickness, MIN_AA);
+    }
+    let border_mix = hermite(saturate((dist + thickness) * inv_b + 0.5));
+
+    let c = mix(fill, border, border_mix);
+    return vec4<f32>(c.rgb, c.a * alpha);
+}
+
+// Signed distance to a rounded box.
+fn sd_round_box(p: vec2<f32>, half_ext: vec2<f32>, r: f32) -> f32 {
+    let q = abs(p) - (half_ext - vec2<f32>(r));
+    return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+// max(fwidth(uv * extent)) without extra derivative instructions.
+fn aa_width(uv_fw: vec2<f32>, extent: vec2<f32>) -> f32 {
+    return max(uv_fw.x * extent.x, uv_fw.y * extent.y);
+}
 
 fn draw_grid(
     world_pos: vec2<f32>,
@@ -34,158 +126,105 @@ fn draw_grid(
     line_alpha: f32,
     line_aa: f32,
 ) -> vec4<f32> {
-    let grid_coord = abs(fract(world_pos / cell_size - 0.5) - 0.5) * cell_size;
+    let grid_coord = abs(fract(world_pos * (1.0 / cell_size) - 0.5) - 0.5) * cell_size;
 
-    let half_width = line_width * 0.5;
-    let aa = line_aa;
+    let aa = max(line_aa, MIN_AA);
+    let e0 = line_width * 0.5 - aa;
 
-    let factor_x = 1.0 - smoothstep(half_width - aa, half_width + aa, grid_coord.x);
-    let factor_y = 1.0 - smoothstep(half_width - aa, half_width + aa, grid_coord.y);
+    // 1 - smoothstep(hw - aa, hw + aa, x) on both axes, one shared reciprocal
+    let t = saturate((grid_coord - vec2<f32>(e0)) * (0.5 / aa));
+    let f = 1.0 - t * t * (3.0 - 2.0 * t);
 
-    let line_factor = max(factor_x, factor_y);
+    let factor = max(f.x, f.y) * line_alpha;
 
-    let factor = line_factor * line_alpha;
-
-    return vec4<f32>(
-        mix(bg_color.rgb, line_color.rgb, factor),
-        1.0,
-    );
+    return vec4<f32>(mix(bg_color.rgb, line_color.rgb, factor), 1.0);
 }
+
+// ---------------------------------------------------------------------------
+// Fragment
+// ---------------------------------------------------------------------------
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let uv_fwidth = fwidth(in.uv);
-    let delta = max(uv_fwidth.x, uv_fwidth.y);
+    // Derivatives must stay in uniform control flow, so compute the two
+    // that are needed once, up front, and derive everything else from them.
+    let uv_fw = fwidth(in.uv);
+    let world_fw = fwidth(in.world_pos);
 
-    let world_fwidth = fwidth(in.world_pos);
-    let grid_line_aa = max(world_fwidth.x, world_fwidth.y);
+    let st = in.shape_type;
 
-    let half_px = in.size * (camera.screen_size * 0.25);
-    let p = in.uv * half_px;
-    let p_fwidth = fwidth(p);
-    let ui_aa = max(p_fwidth.x, p_fwidth.y);
+    // ---- UI shapes (pixel-space SDFs) -----------------------------------
+    if (st == SHAPE_UI_PILL || st == SHAPE_UI_CIRCLE || st == SHAPE_UI_ROUNDED) {
+        let half_px = in.size * (camera.screen_size * 0.25);
+        let m = min(half_px.x, half_px.y);
+        let p = in.uv * half_px;
+        let ui_aa = aa_width(uv_fw, half_px);
 
-    if (in.shape_type == 5u || in.shape_type == 6u || in.shape_type == 7u) {
         var dist: f32;
-        if (in.shape_type == 5u) {
-            let r = min(half_px.x, half_px.y);
-            let q = abs(p) - (half_px - vec2<f32>(r, r));
-            dist = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
-        } else if (in.shape_type == 6u) {
-            dist = length(p) - min(half_px.x, half_px.y);
+        if (st == SHAPE_UI_CIRCLE) {
+            dist = length(p) - m;
         } else {
-            let r = clamp(in.extra_param, 0.0, min(half_px.x, half_px.y));
-            let q = abs(p) - (half_px - vec2<f32>(r, r));
-            dist = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+            let r = select(clamp(in.extra_param, 0.0, m), m, st == SHAPE_UI_PILL);
+            dist = sd_round_box(p, half_px, r);
         }
 
-        let alpha = 1.0 - smoothstep(-ui_aa, ui_aa, dist);
-        if (alpha < 0.001) {
-            discard;
-        }
-
-        let t = min(in.border_thickness, min(half_px.x, half_px.y));
-        let border_aa = max(min(ui_aa, t) * 0.5, 1e-5);
-        let border_mix = smoothstep(-t - border_aa, -t + border_aa, dist);
-
-        let final_color = mix(in.fill_color, in.border_color, border_mix);
-        return vec4<f32>(final_color.rgb, final_color.a * alpha);
+        return shade(dist, ui_aa, min(in.border_thickness, m), in.fill_color, in.border_color);
     }
 
-    if (in.shape_type == 2u) {
-        let cell_size = in.extra_param;
+    // ---- Grid -------------------------------------------------------------
+    if (st == SHAPE_GRID) {
         return draw_grid(
             in.world_pos,
-            cell_size,
+            in.extra_param,
             in.border_thickness,
             in.fill_color,
             in.border_color,
             in.border_color.a,
-            grid_line_aa,
+            max(world_fw.x, world_fw.y),
         );
     }
 
-    let min_size = min(in.size.x, in.size.y);
-    let border_uv_width = in.border_thickness * (2.0 / min_size);
-
-    if (in.shape_type == 0u) {
-        let dist_circle = length(in.uv);
-        let alpha = 1.0 - smoothstep(1.0 - delta, 1.0 + delta, dist_circle);
-        if (alpha < 0.001) {
-            discard;
-        }
-
-        // crisp
-        let border_aa = max(min(delta, border_uv_width) * 0.5, 1e-5);
-        let border_mix = smoothstep(1.0 - border_uv_width - border_aa, 1.0 - border_uv_width + border_aa, dist_circle);
-
-        let final_color = mix(in.fill_color, in.border_color, border_mix);
-        return vec4<f32>(final_color.rgb, final_color.a * alpha);
+    // ---- Circle -----------------------------------------------------------
+    if (st == SHAPE_CIRCLE) {
+        let delta = max(uv_fw.x, uv_fw.y);
+        let border_uv_width = in.border_thickness * (2.0 / min(in.size.x, in.size.y));
+        return shade(length(in.uv) - 1.0, delta, border_uv_width, in.fill_color, in.border_color);
     }
 
-    if (in.shape_type == 1u) {
-        let half = in.size * 0.5;
-        let p_w = in.uv * half;
-        let dist_box = max(abs(p_w.x) - half.x, abs(p_w.y) - half.y);
-
-        let delta_w = max(uv_fwidth.x * half.x, uv_fwidth.y * half.y);
-        let border_w = min(in.border_thickness, min(half.x, half.y));
-
-        let alpha = 1.0 - smoothstep(-delta_w, delta_w, dist_box);
-        if (alpha < 0.001) {
-            discard;
-        }
-
-        // crisp
-        let border_aa = max(min(delta_w, border_w) * 0.5, 1e-5);
-        let border_mix = smoothstep(-border_w - border_aa, -border_w + border_aa, dist_box);
-
-        let final_color = mix(in.fill_color, in.border_color, border_mix);
-        return vec4<f32>(final_color.rgb, final_color.a * alpha);
+    // ---- Box (Chebyshev distance: no sqrt) --------------------------------
+    if (st == SHAPE_BOX) {
+        let half_size = in.size * 0.5;
+        let p = in.uv * half_size;
+        let dist = max(abs(p.x) - half_size.x, abs(p.y) - half_size.y);
+        let border_w = min(in.border_thickness, min(half_size.x, half_size.y));
+        return shade(dist, aa_width(uv_fw, half_size), border_w, in.fill_color, in.border_color);
     }
 
-    if (in.shape_type == 4u) {
-        let half = in.size * 0.5;
-        let p_w = in.uv * half;
-        let r = min(in.extra_param, 1.0) * min(half.x, half.y);
-        let q = abs(p_w) - (half - vec2<f32>(r, r));
-        let dist_rounded = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
-
-        let delta_w = max(uv_fwidth.x * half.x, uv_fwidth.y * half.y);
-
-        let alpha = 1.0 - smoothstep(-delta_w, delta_w, dist_rounded);
-        if (alpha < 0.001) {
-            discard;
-        }
-
-        let border_w = min(in.border_thickness, min(half.x, half.y));
-        // crisp
-        let border_aa = max(min(delta_w, border_w) * 0.5, 1e-5);
-        // let border_mix = smoothstep(-border_w - border_aa, -border_w + border_aa, dist_rounded);
-
-        let final_color = mix(in.fill_color, in.border_color, in.border_color);
-        return vec4<f32>(final_color.rgb, final_color.a * alpha);
+    // ---- Rounded box ------------------------------------------------------
+    if (st == SHAPE_ROUNDED) {
+        let half_size = in.size * 0.5;
+        let p = in.uv * half_size;
+        let r = min(in.extra_param, 1.0) * min(half_size.x, half_size.y);
+        let dist = sd_round_box(p, half_size, r);
+        let border_w = min(in.border_thickness, min(half_size.x, half_size.y));
+        return shade(dist, aa_width(uv_fw, half_size), border_w, in.fill_color, in.border_color);
     }
 
-    if (in.shape_type == 3u && in.sides >= 3u) {
-        let sides_f = f32(in.sides);
-        let angle = atan2(in.uv.y, in.uv.x);
-        let slice = (2.0 * PI) / sides_f;
+    // ---- Regular polygon --------------------------------------------------
+    if (st == SHAPE_POLYGON && in.sides >= 3u) {
+        let n = f32(in.sides);
+        let inv_n = 1.0 / n;
+        let slice = TAU * inv_n;
 
-        let apothem = cos(PI / sides_f);
-        let dist_poly = (cos(floor(0.5 + angle / slice) * slice - angle) * length(in.uv)) / apothem;
+        let angle = fast_atan2(in.uv.y, in.uv.x);
+        let k = floor(0.5 + angle * (n * INV_TAU));
 
-        let alpha = 1.0 - smoothstep(1.0 - delta, 1.0 + delta, dist_poly);
-        if (alpha < 0.001) {
-            discard;
-        }
+        // distance to the nearest edge line, normalised by the apothem
+        let dist_poly = cos_small(k * slice - angle) * length(in.uv) / cos_small(PI * inv_n);
 
-        // crisp
-        let border_aa = max(min(delta, border_uv_width) * 0.5, 1e-5);
-        let border_mix = smoothstep(1.0 - border_uv_width - border_aa, 1.0 - border_uv_width + border_aa, dist_poly);
-
-        let final_color = mix(in.fill_color, in.border_color, border_mix);
-        return vec4<f32>(final_color.rgb, final_color.a * alpha);
+        let delta = max(uv_fw.x, uv_fw.y);
+        let border_uv_width = in.border_thickness * (2.0 / min(in.size.x, in.size.y));
+        return shade(dist_poly - 1.0, delta, border_uv_width, in.fill_color, in.border_color);
     }
 
     return in.fill_color;
