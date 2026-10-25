@@ -137,13 +137,13 @@ struct JsonBullet {
     damage: f64,
     #[serde(default = "d_one")]
     speed: f64,
-    #[serde(default = "d_one")]
+    #[serde(rename = "scatterRate", default = "d_one")]
     scatter_rate: f64,
-    #[serde(default = "d_one")]
+    #[serde(rename = "lifeLength", default = "d_one")]
     life_length: f64,
-    #[serde(default = "d_one")]
+    #[serde(rename = "absorbtionFactor", default = "d_one")]
     absorbtion_factor: f64,
-    #[serde(default = "d_one")]
+    #[serde(rename = "sizeRatio", default = "d_one")]
     size_ratio: f64,
 }
 

@@ -29,6 +29,10 @@ impl Connections {
         self.inner.remove(&id);
     }
 
+    pub fn ids(&self) -> Vec<u32> {
+        self.inner.iter().map(|entry| *entry.key()).collect()
+    }
+
     //     pub fn contains(&self, id: u32) -> bool {
     //         self.inner.contains_key(&id)
     //     }

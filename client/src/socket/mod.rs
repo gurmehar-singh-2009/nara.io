@@ -10,14 +10,16 @@ use sha2::Sha256;
 use shared::packets::{
     PACKET_SEED, Packet, PlayerUpgradesPacket, StatUpgradePacket, TankSelectPacket, TankTreePacket,
     client_bound::{
-        AddEntityPacket, EntityType, LeaderboardPacket, PlayerStatsPacket, RemoveEntityPacket,
-        UpdateEntityPacket,
+        AddEntityPacket, ArenaPacket, DeathPacket, EntityType, LeaderboardPacket,
+        PlayerStatsPacket,
+        RemoveEntityPacket, ServerInfoPacket, SpectatePacket, TankInfoPacket, UpdateEntityPacket,
     },
     handshake::{HandShake, HandshakePacket},
     level_scale,
+    pong::{PingPacket, PongPacket},
     server_bound::{
-        AimPacket, AutoFirePacket, ChatMessagePacket, ChatSendPacket, MovementPacket,
-        SpawnReqPacket,
+        AimPacket, AutoFirePacket, AutoSpinPacket, ChatMessagePacket, ChatSendPacket,
+        MouseMovePacket, MovementPacket, RepelPacket, SpawnReqPacket,
     },
 };
 use wasm_bindgen::JsCast;
@@ -28,8 +30,10 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use crate::{
     entities::tank::Tank,
     render::tank_upgrades,
-    structs::game_state::{ChatChannel, GameState, IncomingChat},
+    structs::game_state::{ArenaInfo, ChatChannel, DeathInfo, GameState, IncomingChat, TankInfo},
 };
+
+const PING_INTERVAL_MS: f64 = 1000.0;
 
 pub struct Socket {
     pub secret_key: StaticSecret,
@@ -107,9 +111,12 @@ impl Socket {
             }
         });
 
+        let pending_spawn: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+
         let tx_clone = tx.clone();
         let send_cipher_clone = Rc::clone(&send_cipher);
         let send_nonce_count_clone = Rc::clone(&send_nonce_count);
+        let pending_spawn_clone = Rc::clone(&pending_spawn);
         let game_clone = Rc::clone(&game);
 
         let button = window
@@ -125,15 +132,6 @@ impl Socket {
             }
             drop(game);
 
-            let cipher_ref = send_cipher_clone.borrow();
-            let cipher = match cipher_ref.as_ref() {
-                Some(cipher) => cipher,
-                None => {
-                    web_sys::console::error_1(&"Cannot spawn: handshake not completed".into());
-                    return;
-                }
-            };
-
             let name = web_sys::window()
                 .and_then(|w| w.document())
                 .and_then(|d| d.get_element_by_id("nameInput"))
@@ -141,32 +139,14 @@ impl Socket {
                 .map(|input| input.value())
                 .unwrap_or_else(|| "Unnamed".into());
 
-            let spawn = SpawnReqPacket::new(name, js_sys::Date::now() as u64);
-            let plaintext = spawn.encode();
-
-            let nonce_counter = {
-                let mut counter = send_nonce_count_clone.borrow_mut();
-                let value = *counter;
-                *counter += 1;
-                value
-            };
-
-            let encrypted = match cipher.encrypt(&nonce(nonce_counter), plaintext.as_ref()) {
-                Ok(data) => data,
-                Err(err) => {
-                    web_sys::console::error_1(
-                        &format!("Failed encrypting SpawnReqPacket: {err:?}").into(),
-                    );
-                    return;
-                }
-            };
-
-            if let Err(err) = tx_clone.unbounded_send(encrypted) {
-                web_sys::console::error_1(
-                    &format!("Failed queueing SpawnReqPacket: {err:?}").into(),
-                );
+            let cipher_ref = send_cipher_clone.borrow();
+            let Some(cipher) = cipher_ref.as_ref() else {
+                web_sys::console::log_1(&"Connecting... spawning as soon as we're in.".into());
+                *pending_spawn_clone.borrow_mut() = Some(name);
                 return;
-            }
+            };
+
+            send_spawn(cipher, &send_nonce_count_clone, &tx_clone, name);
         });
 
         button
@@ -182,6 +162,9 @@ impl Socket {
         let send_nonce_count_for_reader = Rc::clone(&send_nonce_count);
 
         let mut last_auto_fire = false;
+        let mut last_repel = false;
+        let mut last_auto_spin = false;
+        let mut last_ping_at = 0.0f64;
 
         spawn_local(async move {
             while let Some(result) = recv.next().await {
@@ -206,6 +189,18 @@ impl Socket {
                                     web_sys::console::log_1(
                                         &"Handshake accepted! Encryption established.".into(),
                                     );
+
+                                    if let Some(name) = pending_spawn.borrow_mut().take() {
+                                        if let Some(cipher) = send_cipher_for_reader.borrow().as_ref()
+                                        {
+                                            send_spawn(
+                                                cipher,
+                                                &send_nonce_count_for_reader,
+                                                &tx,
+                                                name,
+                                            );
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     web_sys::console::error_1(
@@ -272,19 +267,37 @@ impl Socket {
                                     let mut game = game_for_reader.borrow_mut();
                                     match data.entity_type {
                                         EntityType::Player => {
-                                            game.players.retain(|p| p.id != data.id);
-                                            let mut entity = Tank::new(
-                                                data.id,
-                                                data.name,
-                                                Vec2::from_array([data.x, data.y]),
-                                            );
-                                            entity.scale = level_scale(data.level);
-                                            entity.barrels = data.barrels.clone();
-                                            entity.is_mine = data.is_entity_mine;
+                                            let pos = Vec2::from_array([data.x, data.y]);
+
+                                            if let Some(p) =
+                                                game.players.iter_mut().find(|p| p.id == data.id)
+                                            {
+                                                if p.dying {
+                                                    p.pos = pos;
+                                                    p.last_pos = pos;
+                                                    p.render_pos = pos;
+                                                    p.render_alpha = 0.0;
+                                                    p.dying = false;
+                                                }
+                                                p.name = data.name;
+                                                p.scale = level_scale(data.level);
+                                                p.barrels = data.barrels.clone();
+                                                p.turrets = data.turrets.clone();
+                                                p.is_mine = data.is_entity_mine;
+                                                p.team = data.team;
+                                            } else {
+                                                let mut entity = Tank::new(data.id, data.name, pos);
+                                                entity.scale = level_scale(data.level);
+                                                entity.barrels = data.barrels.clone();
+                                                entity.turrets = data.turrets.clone();
+                                                entity.is_mine = data.is_entity_mine;
+                                                entity.team = data.team;
+                                                game.players.push(entity);
+                                            }
+
                                             if data.is_entity_mine {
                                                 game.my_player_id = Some(data.id);
                                             }
-                                            game.players.push(entity);
                                         }
                                         EntityType::Shape => {
                                             game.shapes.retain(|s| s.id != data.id);
@@ -293,11 +306,19 @@ impl Socket {
                                             );
                                             game.shapes.push(shape);
                                         }
-                                        EntityType::Bullet => {
+                                        EntityType::Bullet | EntityType::Trap => {
                                             let bullet = crate::entities::bullet::Bullet::new(
                                                 data.id, data.x, data.y,
                                             );
                                             game.bullets.push(bullet);
+                                        }
+                                        EntityType::Drone => {
+                                            game.drones.retain(|d| d.id != data.id);
+                                            let mut drone = crate::entities::drone::Drone::new(
+                                                data.id, data.x, data.y,
+                                            );
+                                            drone.team = data.team;
+                                            game.drones.push(drone);
                                         }
                                     }
                                     drop(game);
@@ -322,12 +343,34 @@ impl Socket {
 
                                     for entry in data.data {
                                         match entry.entity_type {
-                                            EntityType::Bullet => {
+                                            EntityType::Bullet | EntityType::Trap => {
                                                 if let Some(bullet) = game
                                                     .bullets
                                                     .iter_mut()
                                                     .find(|b| b.id == entry.id)
                                                 {
+                                                    if bullet.dead {
+                                                        continue;
+                                                    }
+
+                                                    let t = ((current_time
+                                                        - bullet.last_update_time)
+                                                        / 100.0)
+                                                        .clamp(0.0, 1.0)
+                                                        as f32;
+                                                    bullet.last_pos =
+                                                        bullet.last_pos.lerp(bullet.pos, t);
+
+                                                    if entry.health == 0 {
+                                                        bullet.pos =
+                                                            glam::Vec2::new(entry.x, entry.y);
+                                                        bullet.vel = glam::Vec2::ZERO;
+                                                        bullet.dead = true;
+                                                        bullet.dying = false;
+                                                        bullet.last_update_time = current_time;
+                                                        continue;
+                                                    }
+
                                                     let dt = (current_time
                                                         - bullet.last_update_time)
                                                         .max(30.0)
@@ -342,11 +385,11 @@ impl Socket {
                                                         v
                                                     };
 
-                                                    bullet.last_pos = bullet.pos;
                                                     bullet.pos = glam::Vec2::new(entry.x, entry.y);
                                                     bullet.rot = entry.rot;
                                                     bullet.last_update_time = current_time;
                                                     bullet.dying = false;
+                                                    bullet.team = entry.team;
                                                     if entry.scale > 2.0 {
                                                         bullet.radius = entry.scale;
                                                     }
@@ -361,11 +404,52 @@ impl Socket {
                                                         new_bullet.radius = entry.scale;
                                                     }
                                                     new_bullet.recoil = entry.kind;
+                                                    new_bullet.team = entry.team;
+                                                    new_bullet.trap =
+                                                        entry.entity_type == EntityType::Trap;
+                                                    new_bullet.dead = entry.health == 0;
                                                     new_bullet.is_mine = bullet_owner_is_mine(
                                                         entry.kind,
                                                         game.my_player_id,
                                                     );
                                                     game.bullets.push(new_bullet);
+                                                }
+                                            }
+                                            EntityType::Drone => {
+                                                if let Some(drone) = game
+                                                    .drones
+                                                    .iter_mut()
+                                                    .find(|d| d.id == entry.id)
+                                                {
+                                                    let t = ((current_time
+                                                        - drone.last_update_time)
+                                                        / 100.0)
+                                                        .clamp(0.0, 1.0)
+                                                        as f32;
+                                                    drone.last_pos =
+                                                        drone.last_pos.lerp(drone.pos, t);
+                                                    drone.pos = glam::Vec2::new(entry.x, entry.y);
+                                                    drone.last_rot = drone.rot;
+                                                    drone.rot = entry.rot;
+                                                    drone.radius = entry.scale;
+                                                    drone.team = entry.team;
+                                                    drone.last_update_time = current_time;
+                                                    drone.dying = false;
+                                                } else {
+                                                    let mut new_drone =
+                                                        crate::entities::drone::Drone::new(
+                                                            entry.id, entry.x, entry.y,
+                                                        );
+                                                    new_drone.last_update_time = current_time;
+                                                    new_drone.radius = entry.scale;
+                                                    new_drone.rot = entry.rot;
+                                                    new_drone.recoil = entry.kind;
+                                                    new_drone.team = entry.team;
+                                                    new_drone.is_mine = bullet_owner_is_mine(
+                                                        entry.kind,
+                                                        game.my_player_id,
+                                                    );
+                                                    game.drones.push(new_drone);
                                                 }
                                             }
                                             EntityType::Shape => {
@@ -398,14 +482,31 @@ impl Socket {
                                                     .iter_mut()
                                                     .find(|p| p.id == entry.id)
                                                 {
-                                                    player.last_pos = player.pos;
+                                                    let t = ((current_time
+                                                        - player.last_update_time)
+                                                        / 100.0)
+                                                        .clamp(0.0, 1.0)
+                                                        as f32;
+                                                    player.last_pos =
+                                                        player.last_pos.lerp(player.pos, t);
                                                     player.pos = glam::Vec2::new(entry.x, entry.y);
                                                     player.last_rot = player.rot;
                                                     player.rot = entry.rot;
                                                     player.scale = entry.scale;
                                                     player.health = entry.health;
                                                     player.max_health = entry.max_health;
+                                                    player.team = entry.team;
+                                                    player.last_turret_aims =
+                                                        if player.render_turret_aims.len()
+                                                            == entry.turrets.len()
+                                                        {
+                                                            player.render_turret_aims.clone()
+                                                        } else {
+                                                            entry.turrets.clone()
+                                                        };
+                                                    player.turret_aims = entry.turrets;
                                                     player.last_update_time = current_time;
+                                                    player.dying = false;
                                                 }
                                             }
                                         }
@@ -449,7 +550,99 @@ impl Socket {
                                         }
                                     }
 
-                                    let current_auto_fire = game.auto_fire;
+                                    if let Some([x, y, w, h]) = game.mouse_screen {
+                                        let plaintext =
+                                            MouseMovePacket::new(x, y, w, h, PACKET_SEED as u64)
+                                                .encode();
+                                        let nonce_counter = {
+                                            let mut counter =
+                                                send_nonce_count_for_reader.borrow_mut();
+                                            let value = *counter;
+                                            *counter += 1;
+                                            value
+                                        };
+                                        let cipher_ref = send_cipher_for_reader.borrow();
+                                        if let Some(cipher) = cipher_ref.as_ref() {
+                                            if let Ok(encrypted) = cipher
+                                                .encrypt(&nonce(nonce_counter), plaintext.as_ref())
+                                            {
+                                                let _ = tx.unbounded_send(encrypted.to_vec());
+                                            }
+                                        }
+                                    }
+
+                                    if current_time - last_ping_at >= PING_INTERVAL_MS {
+                                        last_ping_at = current_time;
+                                        let plaintext =
+                                            PingPacket::new(current_time, PACKET_SEED as u64)
+                                                .encode();
+                                        let nonce_counter = {
+                                            let mut counter =
+                                                send_nonce_count_for_reader.borrow_mut();
+                                            let value = *counter;
+                                            *counter += 1;
+                                            value
+                                        };
+                                        let cipher_ref = send_cipher_for_reader.borrow();
+                                        if let Some(cipher) = cipher_ref.as_ref() {
+                                            if let Ok(encrypted) = cipher
+                                                .encrypt(&nonce(nonce_counter), plaintext.as_ref())
+                                            {
+                                                let _ = tx.unbounded_send(encrypted.to_vec());
+                                            }
+                                        }
+                                    }
+
+                                    let current_auto_spin = game.auto_spin;
+                                    if current_auto_spin != last_auto_spin {
+                                        last_auto_spin = current_auto_spin;
+                                        let plaintext = AutoSpinPacket::new(
+                                            current_auto_spin,
+                                            PACKET_SEED as u64,
+                                        )
+                                        .encode();
+                                        let nonce_counter = {
+                                            let mut counter =
+                                                send_nonce_count_for_reader.borrow_mut();
+                                            let value = *counter;
+                                            *counter += 1;
+                                            value
+                                        };
+                                        let cipher_ref = send_cipher_for_reader.borrow();
+                                        if let Some(cipher) = cipher_ref.as_ref() {
+                                            if let Ok(encrypted) = cipher
+                                                .encrypt(&nonce(nonce_counter), plaintext.as_ref())
+                                            {
+                                                let _ = tx.unbounded_send(encrypted.to_vec());
+                                            }
+                                        }
+                                    }
+
+                                    let current_repel = game.repel;
+                                    if current_repel != last_repel {
+                                        last_repel = current_repel;
+                                        let plaintext =
+                                            RepelPacket::new(current_repel, PACKET_SEED as u64)
+                                                .encode();
+                                        let nonce_counter = {
+                                            let mut counter =
+                                                send_nonce_count_for_reader.borrow_mut();
+                                            let value = *counter;
+                                            *counter += 1;
+                                            value
+                                        };
+                                        let cipher_ref = send_cipher_for_reader.borrow();
+                                        if let Some(cipher) = cipher_ref.as_ref() {
+                                            if let Ok(encrypted) = cipher
+                                                .encrypt(&nonce(nonce_counter), plaintext.as_ref())
+                                            {
+                                                let _ = tx.unbounded_send(encrypted.to_vec());
+                                            }
+                                        }
+                                    }
+
+                                    let current_auto_fire = game.auto_fire || game.fire_clicked;
+                                    game.fire_clicked = false;
                                     if current_auto_fire != last_auto_fire {
                                         last_auto_fire = current_auto_fire;
                                         let plaintext = AutoFirePacket::new(
@@ -580,6 +773,7 @@ impl Socket {
                                 Ok(data) => {
                                     let mut game = game_for_reader.borrow_mut();
                                     game.level = data.level;
+                                    game.score = data.score;
                                     game.xp = data.xp;
                                     game.xp_to_next = data.xp_to_next;
                                     game.health = data.health;
@@ -614,11 +808,18 @@ impl Socket {
                                                 s.dying = true;
                                             }
                                         }
-                                        EntityType::Bullet => {
+                                        EntityType::Bullet | EntityType::Trap => {
                                             if let Some(b) =
                                                 game.bullets.iter_mut().find(|b| b.id == data.id)
                                             {
                                                 b.dying = true;
+                                            }
+                                        }
+                                        EntityType::Drone => {
+                                            if let Some(d) =
+                                                game.drones.iter_mut().find(|d| d.id == data.id)
+                                            {
+                                                d.dying = true;
                                             }
                                         }
                                     }
@@ -627,13 +828,19 @@ impl Socket {
                                         game.my_player_id = None;
                                         game.auto_fire = false;
                                         game.class_upgrades_available = false;
+                                        game.repel = false;
+                                        game.auto_fire_toggle = false;
+                                        game.auto_spin = false;
+                                        last_auto_fire = false;
+                                        last_repel = false;
+                                        last_auto_spin = false;
                                     }
                                     drop(game);
-                                    last_auto_fire = false;
 
                                     if is_my_player {
-                                        show_home_screen();
-                                        show_death_notice(true);
+                                        game_for_reader.borrow_mut().died_at = Some(
+                                            web_sys::window().unwrap().performance().unwrap().now(),
+                                        );
                                         tank_upgrades::push_tank_options(Vec::new());
                                     }
                                 }
@@ -680,6 +887,7 @@ impl Socket {
                                     };
                                     let mut game = game_for_reader.borrow_mut();
                                     game.incoming_chat.push(IncomingChat {
+                                        sender_id: data.sender_id,
                                         channel,
                                         team: data.team,
                                         sender: data.sender,
@@ -691,6 +899,115 @@ impl Socket {
                                 Err(e) => {
                                     web_sys::console::error_1(
                                         &format!("ChatMessagePacket decode failed: {e:?}").into(),
+                                    );
+                                }
+                            },
+
+                            25 => match DeathPacket::decode(&plaintext) {
+                                Ok(data) => {
+                                    let mut game = game_for_reader.borrow_mut();
+                                    game.death = Some(DeathInfo {
+                                        killer: data.killer,
+                                        killer_kind: data.killer_kind,
+                                        killer_tank: data.killer_tank,
+                                        killer_team: data.killer_team,
+                                        killer_sides: data.killer_sides,
+                                        killer_barrels: data.killer_barrels,
+                                        score: data.score,
+                                        level: data.level,
+                                        kills: data.kills,
+                                        time_alive: data.time_alive,
+                                    });
+                                    drop(game);
+                                }
+                                Err(e) => {
+                                    web_sys::console::error_1(
+                                        &format!("DeathPacket decode failed: {e:?}").into(),
+                                    );
+                                }
+                            },
+
+                            21 => match SpectatePacket::decode(&plaintext) {
+                                Ok(data) => {
+                                    let mut game = game_for_reader.borrow_mut();
+                                    game.spectate = Some(Vec2::new(data.x, data.y));
+                                    drop(game);
+                                }
+                                Err(e) => {
+                                    web_sys::console::error_1(
+                                        &format!("SpectatePacket decode failed: {e:?}").into(),
+                                    );
+                                }
+                            },
+
+                            22 => match ServerInfoPacket::decode(&plaintext) {
+                                Ok(data) => {
+                                    let mut game = game_for_reader.borrow_mut();
+                                    game.server_load = data.load;
+                                    game.server_players = data.players;
+                                    game.server_bots = data.bots;
+                                    game.server_shapes = data.shapes;
+                                    drop(game);
+                                }
+                                Err(e) => {
+                                    web_sys::console::error_1(
+                                        &format!("ServerInfoPacket decode failed: {e:?}").into(),
+                                    );
+                                }
+                            },
+
+                            24 => match PongPacket::decode(&plaintext) {
+                                Ok(data) => {
+                                    let now =
+                                        web_sys::window().unwrap().performance().unwrap().now();
+                                    let rtt = (now - data.time).max(0.0) as f32;
+                                    let mut game = game_for_reader.borrow_mut();
+                                    game.ping_ms = Some(match game.ping_ms {
+                                        Some(old) => old + (rtt - old) * 0.3,
+                                        None => rtt,
+                                    });
+                                    drop(game);
+                                }
+                                Err(e) => {
+                                    web_sys::console::error_1(
+                                        &format!("PongPacket decode failed: {e:?}").into(),
+                                    );
+                                }
+                            },
+
+                            18 => match ArenaPacket::decode(&plaintext) {
+                                Ok(data) => {
+                                    let mut game = game_for_reader.borrow_mut();
+                                    game.arena = ArenaInfo {
+                                        bound: data.bound,
+                                        team_count: data.team_count,
+                                        walls: data.walls,
+                                        zones: data.zones,
+                                    };
+                                    drop(game);
+                                }
+                                Err(e) => {
+                                    web_sys::console::error_1(
+                                        &format!("ArenaPacket decode failed: {e:?}").into(),
+                                    );
+                                }
+                            },
+
+                            19 => match TankInfoPacket::decode(&plaintext) {
+                                Ok(data) => {
+                                    let mut game = game_for_reader.borrow_mut();
+                                    game.tank_info = TankInfo {
+                                        name: data.name,
+                                        field_factor: data.field_factor,
+                                        team: data.team,
+                                        stat_names: data.stat_names,
+                                        stat_maxes: data.stat_maxes,
+                                    };
+                                    drop(game);
+                                }
+                                Err(e) => {
+                                    web_sys::console::error_1(
+                                        &format!("TankInfoPacket decode failed: {e:?}").into(),
                                     );
                                 }
                             },
@@ -730,6 +1047,35 @@ impl Socket {
     }
 }
 
+fn send_spawn(
+    cipher: &ChaCha20Poly1305,
+    nonce_count: &RefCell<u32>,
+    tx: &futures::channel::mpsc::UnboundedSender<Vec<u8>>,
+    name: String,
+) {
+    let plaintext = SpawnReqPacket::new(name, js_sys::Date::now() as u64).encode();
+
+    let counter = {
+        let mut counter = nonce_count.borrow_mut();
+        let value = *counter;
+        *counter += 1;
+        value
+    };
+
+    match cipher.encrypt(&nonce(counter), plaintext.as_ref()) {
+        Ok(encrypted) => {
+            if let Err(err) = tx.unbounded_send(encrypted) {
+                web_sys::console::error_1(
+                    &format!("Failed queueing SpawnReqPacket: {err:?}").into(),
+                );
+            }
+        }
+        Err(err) => {
+            web_sys::console::error_1(&format!("Failed encrypting SpawnReqPacket: {err:?}").into());
+        }
+    }
+}
+
 fn bullet_owner_is_mine(owner_info: u32, my_id: Option<u32>) -> bool {
     if owner_info == 0 || owner_info & 0x8000_0000 != 0 {
         return false;
@@ -745,17 +1091,31 @@ fn set_display(id: &str, display: &str) {
     }
 }
 
-fn show_home_screen() {
-    set_display("gameCanvas", "none");
+fn set_playing(playing: bool) {
+    if let Some(body) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.body())
+    {
+        let classes = body.class_list();
+        let _ = if playing {
+            classes.add_1("playing")
+        } else {
+            classes.remove_1("playing")
+        };
+    }
+}
+
+pub(crate) fn show_home_screen() {
+    set_playing(false);
     set_display("uiOverlay", "flex");
 }
 
 fn show_game_view() {
-    set_display("gameCanvas", "block");
+    set_playing(true);
     set_display("uiOverlay", "none");
 }
 
-fn show_death_notice(visible: bool) {
+pub(crate) fn show_death_notice(visible: bool) {
     if let Some(document) = web_sys::window().and_then(|w| w.document()) {
         if let Some(el) = document.get_element_by_id("deathNotice") {
             let _ = el.set_attribute(

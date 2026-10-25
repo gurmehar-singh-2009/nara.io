@@ -1,22 +1,30 @@
 use glam::Vec2;
 
-use crate::entities::{
-    entity::{Entities, EntityId},
-    shape::ShapeKind,
-    spatial_hash::{HashEntity, SpatialHash},
+use crate::{
+    entities::{
+        entity::{Entities, EntityId},
+        shape::ShapeKind,
+        spatial_hash::{HashEntity, SpatialHash},
+    },
+    game::arena::Arena,
 };
 
 const STEER_DIRS: usize = 16;
 const STEER_RADIUS: f32 = 240.0;
+const WALL_PROBE: f32 = 120.0;
 
+#[allow(clippy::too_many_arguments)]
 pub fn context_steer(
     entities: &Entities,
     hash: &SpatialHash,
+    arena: &Arena,
     nearby: &mut Vec<HashEntity>,
     pos: Vec2,
+    radius: f32,
     desired: Vec2,
     ignore: Option<EntityId>,
 ) -> Option<f32> {
+    let walls_near = arena.circle_hits_wall(pos, WALL_PROBE + radius);
     let desired = desired.normalize_or_zero();
 
     let mut obstacles: [(Vec2, f32); 64] = [(Vec2::ZERO, 0.0); 64];
@@ -92,6 +100,16 @@ pub fn context_steer(
             if dist < 90.0 {
                 let align = (dir.dot(off / dist)).max(0.0);
                 score -= weight * 0.8 * (1.0 - dist / 90.0) * (0.35 + 0.65 * align);
+            }
+        }
+
+        if walls_near {
+            let probe = radius * 0.8;
+
+            if arena.segment_hits_wall(pos, pos + dir * WALL_PROBE * 0.4, probe) {
+                score -= 4.0;
+            } else if arena.segment_hits_wall(pos, pos + dir * WALL_PROBE, probe) {
+                score -= 1.2;
             }
         }
 

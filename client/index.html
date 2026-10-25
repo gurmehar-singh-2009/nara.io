@@ -294,8 +294,12 @@
                 left: 0;
                 width: 100vw;
                 height: 100vh;
+                z-index: 1;
+                display: block;
+            }
+
+            body.playing #gameCanvas {
                 z-index: 20;
-                display: none;
             }
 
             .discord-btn {
@@ -351,16 +355,6 @@
                 font-size: 1.25rem;
             }
 
-            #background {
-                position: fixed;
-                inset: 0;
-                background-image: url("./assets/cc.png");
-                background-size: cover;
-                background-position: center;
-                z-index: 1;
-                will-change: transform;
-            }
-
             .screen-overlay {
                 position: fixed;
                 top: 0;
@@ -368,8 +362,8 @@
                 width: 100%;
                 height: 100%;
                 z-index: 2;
-                backdrop-filter: blur(4px);
-                background-color: rgba(0, 0, 0, 0.5);
+                backdrop-filter: blur(2px);
+                background-color: rgba(0, 0, 0, 0.35);
             }
 
             .side-drawer {
@@ -859,7 +853,6 @@
     <body
         class="h-screen w-screen relative flex flex-col justify-between p-3 overflow-hidden"
     >
-        <div id="background"></div>
         <div class="screen-overlay"></div>
         <canvas id="gameCanvas"></canvas>
 
@@ -1481,32 +1474,9 @@
             document
                 .getElementById("playButton")
                 .addEventListener("click", () => {
-                    document.getElementById("gameCanvas").style.display =
-                        "block";
+                    document.body.classList.add("playing");
                     document.getElementById("uiOverlay").style.display = "none";
                 });
-            const bg = document.getElementById("background");
-            let targetX = 0,
-                targetY = 0,
-                currentX = 0,
-                currentY = 0,
-                lastTime = performance.now();
-            const SMOOTHING_SPEED = 4.5;
-            document.addEventListener("mousemove", (e) => {
-                targetX = (e.clientX / window.innerWidth - 0.5) * 150;
-                targetY = (e.clientY / window.innerHeight - 0.5) * 150;
-            });
-
-            function animate(now) {
-                const dt = Math.min((now - lastTime) / 1000, 0.1);
-                lastTime = now;
-                const factor = 1 - Math.exp(-SMOOTHING_SPEED * dt);
-                currentX += (targetX - currentX) * factor;
-                currentY += (targetY - currentY) * factor;
-                bg.style.transform = `translate3d(${currentX}px, ${currentY}px, 0) scale(1.15)`;
-                requestAnimationFrame(animate);
-            }
-            requestAnimationFrame(animate);
 
             function toggleTheme() {
                 const toggle = document.getElementById("darkThemeToggle");

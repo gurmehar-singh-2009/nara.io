@@ -8,6 +8,7 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterato
 use crate::{
     entities::{
         bullet::Bullets,
+        drone::Drones,
         shape::{ShapeKind, Shapes},
         tank::Tanks,
     },
@@ -27,6 +28,7 @@ pub struct Entities {
 
     pub tanks: Tanks,
     pub bullets: Bullets,
+    pub drones: Drones,
     pub shapes: Shapes,
 
     pub tank_tree: Option<Arc<TankTree>>,
@@ -56,6 +58,7 @@ impl Entities {
             recoil_velocities: vec![],
             tanks: Tanks::new(256),
             bullets: Bullets::new(),
+            drones: Drones::new(),
             shapes: Shapes::new(2048),
             tank_tree: None,
         }
@@ -117,6 +120,7 @@ impl Entities {
         self.alive[id.index] = false;
         self.tanks.remove(id);
         self.shapes.remove(id);
+        self.drones.remove_owned_by(id);
         self.free.push(id.index);
         true
     }

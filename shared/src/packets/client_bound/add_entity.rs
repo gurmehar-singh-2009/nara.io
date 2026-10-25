@@ -2,7 +2,7 @@ use bitcode::{Decode, Encode};
 
 use crate::{
     junk_packet,
-    packets::client_bound::{BarrelDef, EntityType},
+    packets::client_bound::{BarrelDef, EntityType, TurretDef},
 };
 
 junk_packet! {
@@ -14,6 +14,8 @@ junk_packet! {
         pub level: u32,
         pub name: String,
         pub is_entity_mine: bool,
+        pub team: u8,
         pub barrels: Vec<BarrelDef>,
+        pub turrets: Vec<TurretDef>,
     }
 }

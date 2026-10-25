@@ -51,7 +51,7 @@ return {
                 scatterRate = 1,
                 lifeLength = 1,
                 absorbtionFactor = 1,
-                sizeRatio = 1,
+                sizeRatio = 0.699,
             },
         },
         {
@@ -75,7 +75,7 @@ return {
                 scatterRate = 1,
                 lifeLength = 1,
                 absorbtionFactor = 1,
-                sizeRatio = 1,
+                sizeRatio = 0.699,
             },
         },
         {
@@ -99,7 +99,7 @@ return {
                 scatterRate = 1,
                 lifeLength = 1,
                 absorbtionFactor = 1,
-                sizeRatio = 1,
+                sizeRatio = 0.699,
             },
         },
         {
@@ -123,7 +123,7 @@ return {
                 scatterRate = 1,
                 lifeLength = 1,
                 absorbtionFactor = 1,
-                sizeRatio = 1,
+                sizeRatio = 0.699,
             },
         },
     },

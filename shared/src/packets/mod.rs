@@ -6,22 +6,58 @@ use crate::{
     errors::{DecodeSnafu, InvalidByteSizeSnafu, SharedError},
     packets::{
         client_bound::{
-            AddEntityPacket, BarrelDef, LeaderboardPacket, PlayerStatsPacket, RemoveEntityPacket,
+            AddEntityPacket, ArenaPacket, BarrelDef, DeathPacket, LeaderboardPacket,
+            PlayerStatsPacket, TurretDef,
+            RemoveEntityPacket, ServerInfoPacket, SpectatePacket, TankInfoPacket,
             UpdateEntityPacket,
         },
         handshake::HandshakePacket,
+        pong::{PingPacket, PongPacket},
         server_bound::{
-            AimPacket, AutoFirePacket, ChatMessagePacket, ChatSendPacket, MovementPacket,
-            SpawnReqPacket,
+            AimPacket, AutoFirePacket, AutoSpinPacket, ChatMessagePacket, ChatSendPacket,
+            MouseMovePacket, MovementPacket, RepelPacket, SpawnReqPacket,
         },
     },
 };
 
 pub mod client_bound;
 pub mod handshake;
+pub mod pong;
 pub mod server_bound;
 
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/packet_seed.rs"));
+
+pub const BASE_ZOOM: f32 = 0.0038;
+pub const NO_TEAM: u8 = u8::MAX;
+pub const NO_SENDER: u32 = u32::MAX;
+
+pub const KILLER_TANK: u8 = 0;
+pub const KILLER_SQUARE: u8 = 1;
+pub const KILLER_TRIANGLE: u8 = 2;
+pub const KILLER_PENTAGON: u8 = 3;
+pub const KILLER_ARENA: u8 = u8::MAX;
+
+pub fn camera_zoom(level: u32, field_factor: f32) -> f32 {
+    BASE_ZOOM * field_factor.max(0.1) / 1.01f32.powf(level.saturating_sub(1) as f32 * 0.5)
+}
+
+pub fn cursor_world_offset(
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    zoom: f32,
+) -> Option<(f32, f32)> {
+    if width <= 0.0 || height <= 0.0 || zoom <= 0.0 {
+        return None;
+    }
+
+    let px_to_world = 1.0 / (height * zoom);
+    Some((
+        (2.0 * x - width) * px_to_world,
+        (height - 2.0 * y) * px_to_world,
+    ))
+}
 
 pub fn level_scale(level: u32) -> f32 {
     1.01f32.powi(level.saturating_sub(1) as i32)
@@ -183,6 +219,7 @@ pub struct TankOption {
     pub tier: u32,
     pub sides: u32,
     pub barrels: Vec<BarrelDef>,
+    pub turrets: Vec<TurretDef>,
 }
 
 junk_packet! {
@@ -216,4 +253,36 @@ register_packets! {
     (13, ChatMessagePacket),
     (14, StatUpgradePacket),
     (15, PlayerUpgradesPacket),
+    (16, MouseMovePacket),
+    (17, RepelPacket),
+    (18, ArenaPacket),
+    (19, TankInfoPacket),
+    (20, AutoSpinPacket),
+    (21, SpectatePacket),
+    (22, ServerInfoPacket),
+    (23, PingPacket),
+    (24, PongPacket),
+    (25, DeathPacket),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cursor_world_offset;
+
+    #[test]
+    fn cursor_offset_matches_client_projection() {
+        let zoom = 0.004;
+
+        assert_eq!(
+            cursor_world_offset(400.0, 300.0, 800.0, 600.0, zoom),
+            Some((0.0, 0.0))
+        );
+
+        let (x, _) = cursor_world_offset(800.0, 300.0, 800.0, 600.0, zoom).unwrap();
+        let (_, y) = cursor_world_offset(400.0, 0.0, 800.0, 600.0, zoom).unwrap();
+        assert!((x - (800.0 / 600.0) / zoom).abs() < 1e-3);
+        assert!((y - 1.0 / zoom).abs() < 1e-3);
+
+        assert_eq!(cursor_world_offset(0.0, 0.0, 0.0, 600.0, zoom), None);
+    }
 }

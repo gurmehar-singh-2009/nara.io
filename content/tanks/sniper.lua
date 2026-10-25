@@ -52,7 +52,7 @@ return {
                 health = 1,
                 damage = 1,
                 speed = 1.5,
-                scatterRate = 1,
+                scatterRate = 0.3,
                 lifeLength = 1,
                 absorbtionFactor = 1,
                 sizeRatio = 1,

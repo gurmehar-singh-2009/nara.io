@@ -11,7 +11,11 @@ use futures_util::{SinkExt, StreamExt};
 use shared::packets::{
     PACKET_SEED, Packet, StatUpgradePacket, TankSelectPacket,
     handshake::HandshakePacket,
-    server_bound::{AimPacket, AutoFirePacket, ChatSendPacket, MovementPacket, SpawnReqPacket},
+    pong::{PingPacket, PongPacket},
+    server_bound::{
+        AimPacket, AutoFirePacket, AutoSpinPacket, ChatSendPacket, MouseMovePacket, MovementPacket,
+        RepelPacket, SpawnReqPacket,
+    },
 };
 use snafu::ResultExt;
 use tokio::{net::TcpListener, sync::mpsc::unbounded_channel};
@@ -280,12 +284,62 @@ async fn main() -> Result<(), ServerError> {
                             }
                         },
 
+                        23 => match PingPacket::decode(&plaintext) {
+                            Ok(PingPacket { time, .. }) => {
+                                connections.send_to(id, PongPacket::new(time, PACKET_SEED as u64));
+                            }
+                            Err(_) => {
+                                log!("failed to decode PingPacket from {id}");
+                            }
+                        },
+
+                        20 => match AutoSpinPacket::decode(&plaintext) {
+                            Ok(AutoSpinPacket { enabled, .. }) => {
+                                let _ = game_channel_send
+                                    .send(GameEvents::PlayerAutoSpin { id, enabled });
+                            }
+                            Err(_) => {
+                                log!("failed to decode AutoSpinPacket from {id}");
+                            }
+                        },
+
+                        17 => match RepelPacket::decode(&plaintext) {
+                            Ok(RepelPacket { enabled, .. }) => {
+                                let _ =
+                                    game_channel_send.send(GameEvents::PlayerRepel { id, enabled });
+                            }
+                            Err(_) => {
+                                log!("failed to decode RepelPacket from {id}");
+                            }
+                        },
+
                         5 => match AimPacket::decode(&plaintext) {
                             Ok(AimPacket { dir, .. }) => {
                                 let _ = game_channel_send.send(GameEvents::PlayerAim { id, dir });
                             }
                             Err(_) => {
                                 log!("failed to decode AimPacket from {id}");
+                            }
+                        },
+
+                        16 => match MouseMovePacket::decode(&plaintext) {
+                            Ok(MouseMovePacket {
+                                x,
+                                y,
+                                window_width,
+                                window_height,
+                                ..
+                            }) => {
+                                let _ = game_channel_send.send(GameEvents::MouseMove {
+                                    id,
+                                    x,
+                                    y,
+                                    window_width,
+                                    window_height,
+                                });
+                            }
+                            Err(_) => {
+                                log!("failed to decode MouseMovePacket from {id}");
                             }
                         },
 

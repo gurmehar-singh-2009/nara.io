@@ -36,6 +36,7 @@ config_sections! {
     GameConfig {
         max_players: u32,
         max_level: u32,
+        plugins: Vec<String>,
     },
 
     WorldConfig {
@@ -51,6 +52,8 @@ config_sections! {
         view_exit_rad: f32,
 
         num_teams: u8,
+        base_push: f32,
+        shape_clearance: f32,
 
         chat_window_ms: u64,
         chat_burst: usize,
@@ -62,6 +65,11 @@ config_sections! {
         speed: f32,
         radius: f32,
         default_health: u32,
+        health_mult: f32,
+        health_per_level: f32,
+        auto_spin_speed: f32,
+        kill_score_frac: f32,
+        assist_window: f32,
 
         collision_slop: f32,
         collision_correction: f32,
@@ -97,6 +105,70 @@ config_sections! {
         recoil_impulse: f32,
         recoil_decay: f32,
         recoil_max: f32,
+        scatter_degrees: f32,
+    },
+
+    TrapConfig {
+        lifetime: f32,
+        drag: f32,
+        speed_mult: f32,
+    },
+
+    TurretConfig {
+        range: f32,
+        turn_speed: f32,
+        reload: f32,
+        damage_mult: f32,
+        bullet_speed_mult: f32,
+        bullet_health_mult: f32,
+        bullet_radius: f32,
+        muzzle: f32,
+        aim_tolerance: f32,
+        layouts: Vec<TurretLayout>,
+    },
+
+    BaseConfig {
+        drone_count: usize,
+        drone_radius: f32,
+        drone_speed: f32,
+        drone_damage: u32,
+        drone_health: f32,
+        chase_margin: f32,
+        respawn_seconds: f32,
+    },
+
+    SpectateConfig {
+        cell: f32,
+        interval: u64,
+        stickiness: f32,
+        travel_speed: f32,
+        min_travel: f32,
+        max_travel: f32,
+        death_cam: f32,
+    },
+
+    DroneConfig {
+        speed_mult: f32,
+        speed_per_stat: f32,
+        drag: f32,
+        spawn_speed_frac: f32,
+        uncapped_lifetime: f32,
+        ai_range: f32,
+
+        rest_radius: f32,
+        rest_accel_mult: f32,
+        rest_turn_base: f32,
+        rest_turn_per: f32,
+        return_slow_mult: f32,
+        orbit_radii: f32,
+        rest_enter_radii: f32,
+        bot_reach: f32,
+
+        hit_cooldown: f32,
+        contact_push: f32,
+        drone_push: f32,
+        target_push: f32,
+        shape_push: f32,
     },
 
     AntiCheatConfig {
@@ -157,11 +229,24 @@ config_sections! {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct TurretLayout {
+    pub addon: u32,
+    pub count: u32,
+    pub distance: f32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub game: GameConfig,
     pub world: WorldConfig,
     pub player: PlayerConfig,
     pub bullet: BulletConfig,
+    pub trap: TrapConfig,
+    pub turret: TurretConfig,
+    pub base: BaseConfig,
+    pub spectate: SpectateConfig,
+    pub drone: DroneConfig,
     pub anticheat: AntiCheatConfig,
     pub bots: BotConfig,
 }

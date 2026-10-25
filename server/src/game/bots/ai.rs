@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use glam::Vec2;
 use nanorand::Rng;
+use shared::packets::level_scale;
 
 use super::{
     combat::{DuelCtx, DuelState, minimax_decide},
@@ -19,13 +20,14 @@ use crate::{
         spatial_hash::{HashEntity, SpatialHash},
     },
     fs::load_config::Config,
-    game::{bots::BotBrain, game_state::stat_mult},
+    game::{arena::Arena, bots::BotBrain, game_state::stat_mult},
 };
 
 pub fn tick_ai(
     brains: &mut HashMap<u32, BotBrain>,
     players: &HashMap<u32, EntityId>,
     spatial_hash: &SpatialHash,
+    arena: &Arena,
     nav_danger: &[f32],
     rnd: &mut nanorand::WyRand,
     entities: &mut Entities,
@@ -350,6 +352,7 @@ pub fn tick_ai(
             if let Some(target) = brain.target {
                 let tpos = entities.positions[target.index];
                 let dist = pos.distance(tpos);
+                let walled = arena.segment_hits_wall(pos, tpos, 0.0);
                 aim_at = Some(tpos);
 
                 if brain.target_is_tank {
@@ -370,7 +373,7 @@ pub fn tick_ai(
                         % config.bots.decide_interval as u32
                         == 0;
 
-                    if decide_due && !reacting && dist < config.bots.duel_max_dist {
+                    if decide_due && !reacting && !walled && dist < config.bots.duel_max_dist {
                         let foe_level = entities
                             .tanks
                             .get(target)
@@ -516,12 +519,13 @@ pub fn tick_ai(
                         brain.combat_fire = fire;
                     }
 
-                    if dist > config.bots.duel_max_dist || brain.combat_move.is_none() {
+                    if walled || dist > config.bots.duel_max_dist || brain.combat_move.is_none() {
                         far_approach = true;
                         desired = tpos - pos + flank_push;
 
                         want_fire = dist < fire_range
                             && !reacting
+                            && !walled
                             && fire_line_clear(
                                 entities,
                                 spatial_hash,
@@ -570,12 +574,13 @@ pub fn tick_ai(
                     } else {
                         fire_range * 0.75
                     };
-                    if dist > stop_at {
+                    if dist > stop_at || walled {
                         desired = tpos - pos;
                     } else {
                         hold = true;
                     }
                     want_fire = dist < fire_range
+                        && !walled
                         && fire_line_clear(
                             entities,
                             spatial_hash,
@@ -594,10 +599,13 @@ pub fn tick_ai(
                 if (brain.wander_target - pos).length_squared() < 100.0 * 100.0
                     || tick_count >= brain.next_wander_tick
                 {
-                    let bound = config.world.map_bound - 150.0;
-                    brain.wander_target = Vec2::new(
-                        (rnd.generate::<f32>() * 2.0 - 1.0) * bound,
-                        (rnd.generate::<f32>() * 2.0 - 1.0) * bound,
+                    let bound = Vec2::splat(config.world.map_bound - 150.0);
+                    brain.wander_target = arena.random_open_point(
+                        rnd,
+                        -bound,
+                        bound,
+                        config.player.radius * 2.0,
+                        |_| true,
                     );
 
                     brain.next_wander_tick = tick_count + config.bots.wander_interval;
@@ -616,7 +624,8 @@ pub fn tick_ai(
         };
 
         if brain.flee_from.is_none() {
-            let far = pos.distance(goal) > 650.0;
+            let far = pos.distance(goal) > 650.0
+                || arena.segment_hits_wall(pos, goal, config.player.radius);
 
             if far {
                 let (gx, gy) = nav_world_to_cell(goal, config);
@@ -654,7 +663,7 @@ pub fn tick_ai(
                         brain.path = vec![goal];
                         brain.next_repath_tick = tick_count + 5;
                     } else {
-                        brain.path = string_pull(nav_danger, pos, &cells, goal, config);
+                        brain.path = string_pull(nav_danger, arena, pos, &cells, goal, config);
                         brain.next_repath_tick = tick_count + config.bots.repath_interval;
                     }
                 }
@@ -686,9 +695,18 @@ pub fn tick_ai(
                 desired = Vec2::from_angle(jitter).rotate(desired);
             }
 
-            let steer_angle =
-                context_steer(entities, spatial_hash, nearby, pos, desired, ignore_obs)
-                    .unwrap_or(0.0);
+            let radius = config.player.radius * level_scale(my_level);
+            let steer_angle = context_steer(
+                entities,
+                spatial_hash,
+                arena,
+                nearby,
+                pos,
+                radius,
+                desired,
+                ignore_obs,
+            )
+            .unwrap_or(0.0);
             let target = Vec2::from_angle(steer_angle);
             let smoothed = brain.move_vec.lerp(target, config.bots.steer_smooth);
 

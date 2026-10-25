@@ -2,6 +2,7 @@ pub mod buffers;
 pub mod camera;
 pub mod chat;
 pub mod colours;
+pub mod death_screen;
 pub mod minimap;
 pub mod renderer;
 pub mod scoreboard;

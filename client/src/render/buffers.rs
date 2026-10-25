@@ -2,6 +2,8 @@ use bytemuck::{Pod, Zeroable};
 use glyphon::{Attrs, Color, FontSystem, Metrics};
 use wgpu::{BufferAddress, VertexAttribute, VertexBufferLayout, VertexStepMode};
 
+pub const SHAPE_TRAPEZOID: u32 = 8;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Vertex {
@@ -66,6 +68,39 @@ impl EntityInstance {
             array_stride: std::mem::size_of::<Self>() as BufferAddress,
             step_mode: VertexStepMode::Instance,
             attributes: &ATTRIBS,
+        }
+    }
+
+    pub fn trapezoid(
+        position: [f32; 2],
+        bottom_width: f32,
+        top_width: f32,
+        height: f32,
+        rotation: f32,
+        fill_color: [f32; 4],
+        border_color: [f32; 4],
+        border_thickness: f32,
+    ) -> Self {
+        let (wide, narrow, rotation) = if top_width > bottom_width {
+            (top_width, bottom_width, rotation + std::f32::consts::PI)
+        } else {
+            (bottom_width, top_width, rotation)
+        };
+
+        Self {
+            position,
+            size: [wide, height],
+            rotation,
+            shape_type: SHAPE_TRAPEZOID,
+            sides: 0,
+            fill_color,
+            border_color,
+            border_thickness,
+            extra_param: if wide > 0.0 {
+                (narrow / wide).clamp(0.0, 1.0)
+            } else {
+                1.0
+            },
         }
     }
 }

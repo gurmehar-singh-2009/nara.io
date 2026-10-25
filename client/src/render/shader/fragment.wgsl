@@ -39,6 +39,7 @@ const SHAPE_ROUNDED: u32 = 4u;
 const SHAPE_UI_PILL: u32 = 5u;
 const SHAPE_UI_CIRCLE: u32 = 6u;
 const SHAPE_UI_ROUNDED: u32 = 7u;
+const SHAPE_TRAPEZOID: u32 = 8u;
 
 // ---------------------------------------------------------------------------
 // Cheap math helpers
@@ -110,6 +111,20 @@ fn shade(
 fn sd_round_box(p: vec2<f32>, half_ext: vec2<f32>, r: f32) -> f32 {
     let q = abs(p) - (half_ext - vec2<f32>(r));
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+fn dot2(v: vec2<f32>) -> f32 {
+    return dot(v, v);
+}
+
+fn sd_trapezoid(p_in: vec2<f32>, r1: f32, r2: f32, he: f32) -> f32 {
+    let k1 = vec2<f32>(r2, he);
+    let k2 = vec2<f32>(r2 - r1, 2.0 * he);
+    let p = vec2<f32>(abs(p_in.x), p_in.y);
+    let ca = vec2<f32>(p.x - min(p.x, select(r2, r1, p.y < 0.0)), abs(p.y) - he);
+    let cb = p - k1 + k2 * clamp(dot(k1 - p, k2) / dot2(k2), 0.0, 1.0);
+    let s = select(1.0, -1.0, cb.x < 0.0 && ca.y < 0.0);
+    return s * sqrt(min(dot2(ca), dot2(cb)));
 }
 
 // max(fwidth(uv * extent)) without extra derivative instructions.
@@ -206,6 +221,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let p = in.uv * half_size;
         let r = min(in.extra_param, 1.0) * min(half_size.x, half_size.y);
         let dist = sd_round_box(p, half_size, r);
+        let border_w = min(in.border_thickness, min(half_size.x, half_size.y));
+        return shade(dist, aa_width(uv_fw, half_size), border_w, in.fill_color, in.border_color);
+    }
+
+    if (st == SHAPE_TRAPEZOID) {
+        let half_size = in.size * 0.5;
+        let p = in.uv * half_size;
+        let r1 = half_size.x;
+        let r2 = r1 * saturate(in.extra_param);
+        let dist = sd_trapezoid(p, r1, r2, half_size.y);
         let border_w = min(in.border_thickness, min(half_size.x, half_size.y));
         return shade(dist, aa_width(uv_fw, half_size), border_w, in.fill_color, in.border_color);
     }

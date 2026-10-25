@@ -5,6 +5,7 @@ use glam::Vec2;
 use crate::{
     entities::{entity::EntityId, shape::ShapeKind},
     fs::load_config::Config,
+    game::arena::Arena,
     scripting::scripting::Scripting,
 };
 
@@ -246,18 +247,21 @@ impl DStarLite {
 
         self.fold_movement();
 
+        let mut marked = vec![false; NAV_LEN];
         let mut touched: Vec<usize> = Vec::new();
 
         for &c in &changed {
-            if !touched.contains(&c) {
+            if !marked[c] {
+                marked[c] = true;
                 touched.push(c);
             }
 
             let (ns, n) = nav_neighbors(c);
 
-            for i in 0..n {
-                if !touched.contains(&ns[i].0) {
-                    touched.push(ns[i].0);
+            for &(nb, _) in &ns[..n] {
+                if !marked[nb] {
+                    marked[nb] = true;
+                    touched.push(nb);
                 }
             }
         }
@@ -482,11 +486,17 @@ pub(crate) fn nav_line_walkable(danger: &[f32], a: Vec2, b: Vec2, config: &Confi
 
 pub(crate) fn string_pull(
     danger: &[f32],
+    arena: &Arena,
     start: Vec2,
     cells: &[usize],
     goal: Vec2,
     config: &Config,
 ) -> Vec<Vec2> {
+    let radius = config.player.radius;
+    let walkable = |a: Vec2, b: Vec2| {
+        nav_line_walkable(danger, a, b, config) && !arena.segment_hits_wall(a, b, radius)
+    };
+
     let centers: Vec<Vec2> = cells
         .iter()
         .map(|&c| nav_cell_center(c % NAV_CELLS, c / NAV_CELLS, config))
@@ -497,10 +507,10 @@ pub(crate) fn string_pull(
     let mut i = 0;
 
     while i < centers.len() {
-        let mut j = centers.len() - 1;
+        let mut j = i;
 
-        while j > i && !nav_line_walkable(danger, anchor, centers[j], config) {
-            j -= 1;
+        while j + 1 < centers.len() && walkable(anchor, centers[j + 1]) {
+            j += 1;
         }
         path.push(centers[j]);
 
@@ -521,6 +531,26 @@ pub fn rebuild_nav_grid(
 ) {
     *nav_version += 1;
     nav_danger.fill(0.0);
+
+    {
+        let arena = scripting.arena();
+
+        for cy in 0..NAV_CELLS {
+            for cx in 0..NAV_CELLS {
+                let center = nav_cell_center(cx, cy, config);
+                let idx = cy * NAV_CELLS + cx;
+
+                if arena.circle_hits_wall(center, config.player.radius) {
+                    nav_danger[idx] = NAV_BLOCK_DANGER;
+                } else if arena
+                    .zone_at(center)
+                    .is_some_and(|z| z.team != shared::packets::NO_TEAM && z.damage > 0.0)
+                {
+                    nav_danger[idx] += NAV_BLOCK_DANGER * 0.5;
+                }
+            }
+        }
+    }
 
     let entities = scripting.entities_mut();
 

@@ -6,24 +6,41 @@ use std::{
 };
 
 use mlua::{Function, Lua};
+use paris::error;
 
 use crate::{
     entities::entity::Entities,
     fs::tank_defs::TankTree,
-    game::{game_state::GameEvents, scheduler::Scheduler},
-    scripting::registery::{TankRegistry, WeaponRegistry, register_commands, register_events},
+    game::{arena::Arena, game_state::GameEvents, scheduler::Scheduler},
+    scripting::{
+        api::{LuaBridge, args_table, register_api},
+        registery::{TankRegistry, WeaponRegistry, register_commands, register_events},
+        userdata::player::LuaPlayer,
+    },
 };
 
-const PRELUDE: &str = "function wait(seconds) return coroutine.yield(seconds) end";
+const PRELUDE: &str = "
+function wait(seconds) return coroutine.yield(seconds) end
+
+function every(seconds, f)
+    task.spawn(function()
+        while true do
+            wait(seconds)
+            f()
+        end
+    end)
+end
+";
 
 pub struct Scripting {
     pub lua: Lua,
     pub entities: Arc<Mutex<Entities>>,
+    pub arena: Arc<Mutex<Arena>>,
+    pub bridge: Arc<Mutex<LuaBridge>>,
     pub weapons: WeaponRegistry,
     pub tanks: TankRegistry,
     #[allow(dead_code)]
     pub abilities: Option<()>,
-    #[allow(dead_code)]
     pub commands: Arc<Mutex<HashMap<String, Function>>>,
     pub scheduler: Scheduler,
 
@@ -55,25 +72,30 @@ fn snapshot_tank_files(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
 }
 
 impl Scripting {
-    pub fn new(entities: Entities) -> mlua::Result<Self> {
+    pub fn new(entities: Entities, map_bound: f32, bot_id_base: u32) -> mlua::Result<Self> {
         let lua = Lua::new();
 
         let entities = Arc::new(Mutex::new(entities));
-        lua.set_app_data(entities.clone());
+        let arena = Arc::new(Mutex::new(Arena::new(map_bound)));
+        let bridge = Arc::new(Mutex::new(LuaBridge::new(bot_id_base)));
 
-        lua.load(PRELUDE).exec()?;
+        lua.set_app_data(entities.clone());
+        lua.set_app_data(arena.clone());
+        lua.set_app_data(bridge.clone());
 
         let commands = register_commands(&lua)?;
         register_events(&lua)?;
+        register_api(&lua)?;
 
-        let weapons = WeaponRegistry::default();
-        let tanks = TankRegistry::default();
+        lua.load(PRELUDE).set_name("prelude").exec()?;
 
         Ok(Self {
             lua,
             entities,
-            weapons,
-            tanks,
+            arena,
+            bridge,
+            weapons: WeaponRegistry::default(),
+            tanks: TankRegistry::default(),
             abilities: None,
             commands,
             scheduler: Scheduler::default(),
@@ -91,9 +113,7 @@ impl Scripting {
             paths.sort();
 
             for path in paths {
-                let src = std::fs::read_to_string(&path).map_err(mlua::Error::external)?;
-                let name = path.to_string_lossy().to_string();
-                self.lua.load(&src).set_name(name.as_str()).exec()?;
+                self.run_file(&path)?;
             }
         }
 
@@ -111,14 +131,88 @@ impl Scripting {
         Ok(())
     }
 
-    // note: this is NOT `Send`!!!
-    // dont hold across an await
+    pub fn load_plugin(&mut self, dir: &str, name: &str) -> mlua::Result<()> {
+        let path = Path::new(dir).join("plugins").join(format!("{name}.lua"));
+
+        if !path.is_file() {
+            return Err(mlua::Error::runtime(format!(
+                "plugin \"{name}\" not found at {}",
+                path.display()
+            )));
+        }
+
+        self.run_file(&path)
+    }
+
+    fn run_file(&mut self, path: &Path) -> mlua::Result<()> {
+        let src = std::fs::read_to_string(path).map_err(mlua::Error::external)?;
+        let name = path.to_string_lossy().to_string();
+        self.lua.load(&src).set_name(name.as_str()).exec()?;
+        self.start_spawned();
+
+        Ok(())
+    }
+
     pub fn entities(&self) -> MutexGuard<'_, Entities> {
         self.entities.lock().expect("entities mutex poisoned")
     }
 
     pub fn entities_mut(&self) -> MutexGuard<'_, Entities> {
         self.entities()
+    }
+
+    pub fn arena(&self) -> MutexGuard<'_, Arena> {
+        self.arena.lock().expect("arena mutex poisoned")
+    }
+
+    pub fn bridge(&self) -> MutexGuard<'_, LuaBridge> {
+        self.bridge.lock().expect("lua bridge mutex poisoned")
+    }
+
+    pub fn start_spawned(&mut self) {
+        let spawned = std::mem::take(&mut self.bridge().spawned);
+
+        for f in spawned {
+            let result = self
+                .lua
+                .create_thread(f)
+                .and_then(|thread| self.scheduler.start_thread(thread, ()));
+
+            if let Err(err) = result {
+                error!("lua task error: {err}");
+            }
+        }
+    }
+
+    pub fn tick(&mut self) {
+        self.scheduler.on_tick();
+        self.start_spawned();
+    }
+
+    pub fn run_command(&mut self, conn: u32, line: &str) -> mlua::Result<bool> {
+        let mut parts = line.trim_start_matches('/').split_whitespace();
+        let Some(name) = parts.next().map(|n| n.to_lowercase()) else {
+            return Ok(false);
+        };
+        let args: Vec<&str> = parts.collect();
+
+        let Some(func) = self
+            .commands
+            .lock()
+            .map_err(|e| mlua::Error::external(e.to_string()))?
+            .get(&name)
+            .cloned()
+        else {
+            return Ok(false);
+        };
+
+        let thread = self.lua.create_thread(func)?;
+        let args = args_table(&self.lua, &args)?;
+        self.scheduler
+            .start_thread(thread, (LuaPlayer(conn), args))?;
+        self.start_spawned();
+
+        Ok(true)
     }
 
     pub fn reload_tanks_if_changed(&mut self) -> mlua::Result<Option<TankTree>> {
@@ -141,72 +235,126 @@ impl Scripting {
     }
 
     pub fn dispatch_event(&mut self, event: &GameEvents) -> mlua::Result<()> {
-        match event {
+        let payload = self.lua.create_table()?;
+
+        let name = match event {
             GameEvents::PlayerSpawn { id, name } => {
-                let payload = self.lua.create_table()?;
                 payload.set("id", *id)?;
                 payload.set("name", name.as_str())?;
-                Self::fire_listeners(&self.lua, &mut self.scheduler, "player_spawn", &payload)?;
+                payload.set("player", LuaPlayer(*id))?;
+                "player_spawn"
             }
             GameEvents::PlayerDisconnect { id } => {
-                let payload = self.lua.create_table()?;
                 payload.set("id", *id)?;
-                Self::fire_listeners(
-                    &self.lua,
-                    &mut self.scheduler,
-                    "player_disconnect",
-                    &payload,
-                )?;
+                "player_disconnect"
             }
             GameEvents::PlayerMovement { id, dir } => {
-                let payload = self.lua.create_table()?;
                 payload.set("id", *id)?;
                 payload.set("dir", *dir)?;
-                Self::fire_listeners(&self.lua, &mut self.scheduler, "player_movement", &payload)?;
+                "player_movement"
             }
             GameEvents::PlayerAutoFire { id, enabled } => {
-                let payload = self.lua.create_table()?;
                 payload.set("id", *id)?;
                 payload.set("enabled", *enabled)?;
-                Self::fire_listeners(&self.lua, &mut self.scheduler, "player_autofire", &payload)?;
+                "player_autofire"
+            }
+            GameEvents::PlayerRepel { id, enabled } => {
+                payload.set("id", *id)?;
+                payload.set("enabled", *enabled)?;
+                "player_repel"
+            }
+            GameEvents::PlayerAutoSpin { id, enabled } => {
+                payload.set("id", *id)?;
+                payload.set("enabled", *enabled)?;
+                "player_autospin"
             }
             GameEvents::PlayerAim { id, dir } => {
-                let payload = self.lua.create_table()?;
                 payload.set("id", *id)?;
                 payload.set("dir", *dir)?;
-                Self::fire_listeners(&self.lua, &mut self.scheduler, "player_aim", &payload)?;
+                "player_aim"
             }
             GameEvents::TankSelect { id, tank_id } => {
-                let payload = self.lua.create_table()?;
                 payload.set("id", *id)?;
                 payload.set("tankId", *tank_id)?;
-                Self::fire_listeners(&self.lua, &mut self.scheduler, "tank_select", &payload)?;
+                payload.set("player", LuaPlayer(*id))?;
+                "tank_select"
             }
-            GameEvents::TankTree { .. } => {
-                let payload = self.lua.create_table()?;
-                Self::fire_listeners(&self.lua, &mut self.scheduler, "tank_tree", &payload)?;
+            GameEvents::StatUpgrade { id, stat } => {
+                payload.set("id", *id)?;
+                payload.set("stat", *stat + 1)?;
+                "stat_upgrade"
             }
-            _ => {}
-        }
+            GameEvents::ChatMessage { id, channel, text } => {
+                if text.starts_with('/') {
+                    return Ok(());
+                }
+                payload.set("id", *id)?;
+                payload.set("channel", if *channel == 1 { "team" } else { "global" })?;
+                payload.set("text", text.as_str())?;
+                payload.set("player", LuaPlayer(*id))?;
+                "chat"
+            }
+            GameEvents::TankTree { .. } => "tank_tree",
+            GameEvents::Tick { tick } => {
+                payload.set("tick", *tick)?;
+                "tick"
+            }
+            GameEvents::PlayerDeath { id, killer } => {
+                payload.set("id", *id)?;
+                payload.set("killerId", *killer)?;
+                payload.set("player", LuaPlayer(*id))?;
+                payload.set("killer", killer.map(LuaPlayer))?;
+                "player_death"
+            }
+            GameEvents::ShapeKill { id, kind } => {
+                payload.set("id", *id)?;
+                payload.set("kind", *kind)?;
+                payload.set("player", LuaPlayer(*id))?;
+                "shape_kill"
+            }
+            GameEvents::LevelUp { id, level } => {
+                payload.set("id", *id)?;
+                payload.set("level", *level)?;
+                payload.set("player", LuaPlayer(*id))?;
+                "level_up"
+            }
+            GameEvents::MouseMove { .. } => return Ok(()),
+        };
+
+        self.fire_listeners(name, payload);
+        self.start_spawned();
+
         Ok(())
     }
 
-    fn fire_listeners(
-        lua: &Lua,
-        scheduler: &mut Scheduler,
-        event_name: &str,
-        payload: &mlua::Table,
-    ) -> mlua::Result<()> {
-        let listeners: mlua::Table = lua.named_registry_value("EVENT_LISTENERS")?;
+    pub fn has_listeners(&self, event_name: &str) -> bool {
+        self.lua
+            .named_registry_value::<mlua::Table>("EVENT_LISTENERS")
+            .and_then(|l| l.get::<Option<mlua::Table>>(event_name))
+            .map(|t| t.is_some_and(|t| t.raw_len() > 0))
+            .unwrap_or(false)
+    }
 
-        if let Ok(handlers) = listeners.get::<mlua::Table>(event_name) {
-            for func in handlers.sequence_values::<Function>() {
-                let func = func?;
-                let thread = lua.create_thread(func)?;
-                scheduler.start_thread(thread, payload.clone())?;
+    fn fire_listeners(&mut self, event_name: &str, payload: mlua::Table) {
+        let Ok(listeners) = self
+            .lua
+            .named_registry_value::<mlua::Table>("EVENT_LISTENERS")
+        else {
+            return;
+        };
+
+        let Ok(Some(handlers)) = listeners.get::<Option<mlua::Table>>(event_name) else {
+            return;
+        };
+
+        for func in handlers.sequence_values::<Function>() {
+            let result = func
+                .and_then(|f| self.lua.create_thread(f))
+                .and_then(|thread| self.scheduler.start_thread(thread, payload.clone()));
+
+            if let Err(err) = result {
+                error!("lua \"{event_name}\" handler error: {err}");
             }
         }
-
-        Ok(())
     }
 }

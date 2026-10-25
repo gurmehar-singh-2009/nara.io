@@ -11,6 +11,7 @@ junk_packet! {
 
 junk_packet! {
     pub struct ChatMessagePacket {
+        pub sender_id: u32,
         pub channel: u8,
         pub team: u8,
         pub timestamp: u64,

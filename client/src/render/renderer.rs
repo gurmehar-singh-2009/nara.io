@@ -5,6 +5,7 @@ use glyphon::{
     Attrs, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache, TextArea,
     TextAtlas, TextBounds, TextRenderer, Viewport, cosmic_text::Weight,
 };
+use shared::packets::{NO_TEAM, camera_zoom};
 use wasm_bindgen::{JsCast, closure::Closure, prelude::*};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::window;
@@ -32,9 +33,10 @@ use crate::{
         buffers::{CameraUniform, EntityInstance},
         camera::{CameraController, SpringPos},
         chat::ChatPanel,
-        colours::{DARK_THEME, to_glyphon, with_alpha},
+        colours::{DARK_THEME, team_color, to_glyphon, with_alpha},
+        death_screen::DeathScreen,
         minimap,
-        scoreboard::{Scoreboard, bar_ui_instance, rounded_ui_instance},
+        scoreboard::{Scoreboard, pill_instance, rounded_ui_instance},
         tank_upgrades::{TankUpgradePanel, default_classes},
         upgrade_panel::UpgradePanel,
     },
@@ -44,24 +46,166 @@ use crate::{
 const PLAYER_DISPLAY_SMOOTH_TIME: f32 = 0.06;
 const INSTANCE_CAPACITY: u64 = 4096;
 
-const PLAYER_ZOOM: f32 = 0.0038;
+const PLAYER_ZOOM: f32 = shared::packets::BASE_ZOOM;
 
 const BULLET_STALE_FADE_MS: f64 = 200.0;
 const BULLET_STALE_CULL_MS: f64 = 900.0;
+const PLAYER_STALE_MS: f64 = 1500.0;
+const DEATH_FALLBACK_MS: f64 = 1500.0;
+const TRAP_SPIN: f64 = 0.6;
+const SPECTATE_ZOOM_MULT: f32 = 0.8;
+const SPECTATE_FOLLOW_TIME: f32 = 0.35;
 
 const CULL_MARGIN: f32 = 150.0;
 const BULLET_CULL_RADIUS: f32 = 64.0;
 
-const SCORE_BAR_W_FRAC: f32 = 0.5;
-const SCORE_BAR_H: f32 = 36.0;
-const SCORE_BAR_BOTTOM: f32 = 48.0;
+const LEVEL_BAR_W_FRAC: f32 = 0.34;
+const LEVEL_BAR_MAX_W: f32 = 560.0;
+const SCORE_BAR_W_RATIO: f32 = 0.72;
+const SCORE_BAR_H: f32 = 26.0;
+const LEVEL_BAR_BOTTOM: f32 = 34.0;
 const SCORE_TEXT_OUTLINE_PX: f32 = 2.0;
+const HUD_BAR_SPEED: f32 = 8.0;
+const HUD_BAR_OUTLINE: f32 = 3.0;
+const HUD_BAR_TRACK: [f32; 4] = [0.2, 0.2, 0.2, 0.85];
+const HUD_BAR_EDGE: [f32; 4] = [0.08, 0.08, 0.08, 0.95];
+const NAME_LABEL_FONT: f32 = 24.0;
+const NAME_LABEL_LINE: f32 = 28.0;
+const NAME_LABEL_GAP: f32 = 6.0;
 
 const HEALTH_BAR_BORDER: f32 = 1.5;
 const HEALTH_BAR_INSET: f32 = 2.5;
 const HEALTH_BAR_FADE_SPEED: f32 = 10.0;
-const LEVEL_BAR_H: f32 = 12.0;
-const LEVEL_BAR_GAP: f32 = 8.0;
+const LEVEL_BAR_H: f32 = 30.0;
+const LEVEL_BAR_GAP: f32 = 6.0;
+
+const OUTLINE_DIRS: [(f32, f32); 8] = [
+    (1.0, 0.0),
+    (-1.0, 0.0),
+    (0.0, 1.0),
+    (0.0, -1.0),
+    (1.0, 1.0),
+    (1.0, -1.0),
+    (-1.0, 1.0),
+    (-1.0, -1.0),
+];
+
+const NOTICE_TIME: f32 = 2.5;
+const NOTICE_FADE: f32 = 0.4;
+const NOTICE_TOP: f32 = 16.0;
+const NOTICE_H: f32 = 34.0;
+const NOTICE_GAP: f32 = 8.0;
+const NOTICE_SLIDE_SPEED: f32 = 14.0;
+const MAX_NOTICES: usize = 4;
+
+struct Notice {
+    buffer: glyphon::Buffer,
+    time: f32,
+    y: f32,
+}
+
+impl Notice {
+    fn alpha(&self) -> f32 {
+        let fade_in = ((NOTICE_TIME - self.time) / 0.15).clamp(0.0, 1.0);
+        (self.time / NOTICE_FADE).clamp(0.0, 1.0) * fade_in
+    }
+}
+
+#[derive(Default)]
+struct Notices {
+    entries: Vec<Notice>,
+}
+
+impl Notices {
+    fn bottom(&self) -> f32 {
+        let n = self.entries.len() as f32;
+        if n == 0.0 {
+            return 0.0;
+        }
+        NOTICE_TOP + n * NOTICE_H + (n - 1.0) * NOTICE_GAP
+    }
+
+    fn push(&mut self, fs: &mut FontSystem, text: &str) {
+        let mut buffer = glyphon::Buffer::new(fs, Metrics::new(20.0, 24.0));
+
+        buffer.set_text(text, &bold_attrs(), Shaping::Basic, None);
+
+        buffer.shape_until_scroll(fs, false);
+
+        self.entries.insert(
+            0,
+            Notice {
+                buffer,
+                time: NOTICE_TIME,
+                y: NOTICE_TOP - NOTICE_H,
+            },
+        );
+
+        self.entries.truncate(MAX_NOTICES);
+    }
+
+    fn tick(&mut self, dt: f32) {
+        let t = 1.0 - (-NOTICE_SLIDE_SPEED * dt).exp();
+
+        for (i, notice) in self.entries.iter_mut().enumerate() {
+            let target = NOTICE_TOP + NOTICE_H * 0.5 + i as f32 * (NOTICE_H + NOTICE_GAP);
+
+            notice.y += (target - notice.y) * t;
+
+            notice.time -= dt;
+        }
+
+        self.entries.retain(|n| n.time > 0.0);
+    }
+}
+
+struct HudLayout {
+    cx: f32,
+    level_w: f32,
+    level_cy: f32,
+    score_w: f32,
+    score_cy: f32,
+    name_cy: f32,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_centered_text<'a>(
+    areas: &mut Vec<TextArea<'a>>,
+    buffer: &'a glyphon::Buffer,
+    cx: f32,
+    cy: f32,
+    outline_px: f32,
+    outline: Color,
+    fill: Color,
+    bounds: TextBounds,
+) {
+    let (w, h) = Renderer::text_dimensions(buffer);
+
+    let left = cx - w * 0.5;
+    let top = cy - h * 0.5;
+
+    for (dx, dy) in OUTLINE_DIRS {
+        areas.push(TextArea {
+            buffer,
+            left: left + dx * outline_px,
+            top: top + dy * outline_px,
+            scale: 1.0,
+            bounds,
+            default_color: outline,
+            custom_glyphs: &[],
+        });
+    }
+
+    areas.push(TextArea {
+        buffer,
+        left,
+        top,
+        scale: 1.0,
+        bounds,
+        default_color: fill,
+        custom_glyphs: &[],
+    });
+}
 
 fn bold_attrs() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif).weight(Weight::BOLD)
@@ -85,6 +229,7 @@ pub struct RenderState {
     camera_buffer: Buffer,
     camera_bind_group: BindGroup,
     num_instances: u32,
+    world_instances: u32,
 
     scratch_instances: Vec<EntityInstance>,
 
@@ -93,6 +238,7 @@ pub struct RenderState {
     viewport: Viewport,
     atlas: TextAtlas,
     text_renderer: TextRenderer,
+    world_text_renderer: TextRenderer,
     text_buffer: glyphon::Buffer,
 
     stats_text: String,
@@ -103,6 +249,17 @@ pub struct RenderState {
     level_bar_buffer: glyphon::Buffer,
     level_text: String,
     last_level_text: String,
+    name_bar_buffer: glyphon::Buffer,
+    name_text: String,
+    last_name_text: String,
+    score_fill: f32,
+    level_fill: f32,
+    show_debug: bool,
+    notices: Notices,
+    net_buffers: Vec<glyphon::Buffer>,
+    net_text: [String; 2],
+    last_net_text: [String; 2],
+    spectate_follow: SpringPos,
     debug_buffer: glyphon::Buffer,
     debug_text: String,
     debug_dirty: bool,
@@ -117,6 +274,7 @@ pub struct RenderState {
     upgrade_panel: UpgradePanel,
     chat: ChatPanel,
     class_panel: TankUpgradePanel,
+    death: DeathScreen,
 
     player_display: SpringPos,
     camera: CameraController,
@@ -124,8 +282,6 @@ pub struct RenderState {
     had_player: bool,
     last_frame_time: Option<f64>,
     cursor_pos: Option<Vec2>,
-
-    mouse_left_down: bool,
 
     debug_render_mode: u8,
     log_frames: u32,
@@ -369,6 +525,17 @@ impl RenderState {
             None,
         );
 
+        let world_text_renderer = TextRenderer::new(
+            &mut atlas,
+            &device,
+            MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            None,
+        );
+
         let mut viewport = Viewport::new(&device, &cache);
 
         viewport.update(
@@ -396,20 +563,32 @@ impl RenderState {
         let upgrade_panel = UpgradePanel::new(&mut font_system);
         let chat = ChatPanel::new(&mut font_system);
         let class_panel = TankUpgradePanel::new(&mut font_system, default_classes());
+        let death = DeathScreen::new(&mut font_system);
 
-        let mut score_bar_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(26.0, 30.0));
+        let mut score_bar_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(18.0, 22.0));
 
         score_bar_buffer.set_size(Some(physical_width as f32), Some(physical_height as f32));
 
         score_bar_buffer.set_text("", &bold_attrs(), Shaping::Basic, None);
         score_bar_buffer.shape_until_scroll(&mut font_system, false);
 
-        let mut level_bar_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(14.0, 16.0));
+        let mut level_bar_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(20.0, 24.0));
 
         level_bar_buffer.set_size(Some(physical_width as f32), Some(physical_height as f32));
 
         level_bar_buffer.set_text("", &bold_attrs(), Shaping::Basic, None);
         level_bar_buffer.shape_until_scroll(&mut font_system, false);
+
+        let net_buffers = (0..2)
+            .map(|_| glyphon::Buffer::new(&mut font_system, Metrics::new(14.0, 18.0)))
+            .collect();
+
+        let mut name_bar_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(40.0, 46.0));
+
+        name_bar_buffer.set_size(Some(physical_width as f32), Some(physical_height as f32));
+
+        name_bar_buffer.set_text("", &bold_attrs(), Shaping::Basic, None);
+        name_bar_buffer.shape_until_scroll(&mut font_system, false);
 
         let mut debug_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(26.0, 30.0));
 
@@ -425,7 +604,7 @@ impl RenderState {
         debug_buffer.shape_until_scroll(&mut font_system, false);
 
         let mut camera = CameraController::new();
-        camera.zoom = PLAYER_ZOOM;
+        camera.snap_zoom(PLAYER_ZOOM);
 
         Self {
             surface,
@@ -439,12 +618,14 @@ impl RenderState {
             camera_buffer,
             camera_bind_group,
             num_instances: 0,
+            world_instances: 0,
             scratch_instances: Vec::with_capacity(1024),
             font_system,
             swash_cache,
             viewport,
             atlas,
             text_renderer,
+            world_text_renderer,
             text_buffer,
             stats_text: String::with_capacity(64),
             last_stats_text: String::with_capacity(64),
@@ -454,6 +635,17 @@ impl RenderState {
             level_bar_buffer,
             level_text: String::with_capacity(16),
             last_level_text: String::with_capacity(16),
+            name_bar_buffer,
+            name_text: String::with_capacity(32),
+            last_name_text: String::with_capacity(32),
+            score_fill: 0.0,
+            level_fill: 0.0,
+            show_debug: false,
+            notices: Notices::default(),
+            net_buffers,
+            net_text: Default::default(),
+            last_net_text: Default::default(),
+            spectate_follow: SpringPos::new(SPECTATE_FOLLOW_TIME),
             debug_buffer,
             debug_text: String::with_capacity(160),
             debug_dirty: true,
@@ -467,13 +659,13 @@ impl RenderState {
             upgrade_panel,
             chat,
             class_panel,
+            death,
             player_display: SpringPos::new(PLAYER_DISPLAY_SMOOTH_TIME),
             camera,
             camera_enabled: true,
             had_player: false,
             last_frame_time: None,
             cursor_pos: None,
-            mouse_left_down: false,
             debug_render_mode: 0,
             log_frames: 0,
             last_log_time: 0.0,
@@ -514,6 +706,9 @@ impl RenderState {
         self.level_bar_buffer
             .set_size(Some(width as f32), Some(height as f32));
 
+        self.name_bar_buffer
+            .set_size(Some(width as f32), Some(height as f32));
+
         self.debug_buffer
             .set_size(Some(width as f32), Some(height as f32));
 
@@ -522,6 +717,7 @@ impl RenderState {
 
     pub fn update(&mut self, instances: &[EntityInstance]) {
         self.num_instances = instances.len() as u32;
+        self.world_instances = self.num_instances;
 
         if instances.is_empty() {
             return;
@@ -573,11 +769,12 @@ impl RenderState {
     pub fn render_entities_with_text(
         &mut self,
         entities: &[RenderEntity],
-        bubble_anchors: &[(String, Vec2, f32)],
+        bubble_anchors: &[(u32, Vec2, f32)],
         camera_pos: [f32; 2],
         zoom: f32,
         upgrade_points: u32,
         upgrade_levels: &[u8; 8],
+        show_hud: bool,
     ) {
         self.window.request_redraw();
 
@@ -595,26 +792,28 @@ impl RenderState {
         let screen_h = self.config.height as f32;
         let screen = Vec2::new(screen_w, screen_h);
 
-        let (ui_instances, scoreboard_areas) = if mode == 0 {
-            self.scoreboard.render_data(screen)
+        let (ui_instances, scoreboard_areas) = if mode == 0 && show_hud {
+            let me = Some(self.name_text.as_str()).filter(|n| !n.is_empty());
+
+            self.scoreboard.render_data(screen, me)
         } else {
             (Vec::new(), Vec::new())
         };
 
-        let (panel_instances, panel_areas) = if mode == 0 {
+        let (panel_instances, panel_areas) = if mode == 0 && show_hud {
             self.upgrade_panel
                 .render_data(screen, upgrade_levels, upgrade_points)
         } else {
             (Vec::new(), Vec::new())
         };
 
-        let (chat_instances, chat_areas) = if mode == 0 {
+        let (chat_instances, chat_areas) = if mode == 0 && show_hud {
             self.chat.render_data(screen)
         } else {
             (Vec::new(), Vec::new())
         };
 
-        let (class_instances, class_areas) = if mode == 0 {
+        let (class_instances, class_areas) = if mode == 0 && show_hud {
             self.class_panel.render_data(screen, camera_pos, zoom)
         } else {
             (Vec::new(), Vec::new())
@@ -634,14 +833,18 @@ impl RenderState {
         );
 
         all_instances.extend(entities.iter().map(|e| e.instance));
-        all_instances.extend(ui_instances);
-        all_instances.extend(panel_instances);
-        all_instances.extend(chat_instances);
-        all_instances.extend(class_instances);
+
+        let (death_instances, death_areas) = if mode == 0 {
+            self.death.render_data(screen, camera_pos, zoom)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
+        let world_text = !self.death.is_active();
 
         let mut bubble_rects: Vec<(usize, f32, f32, f32, f32, f32)> = Vec::new();
 
-        if mode == 0 {
+        if mode == 0 && world_text {
             let bubbles = self.chat.bubbles();
 
             if !bubbles.is_empty() {
@@ -651,9 +854,10 @@ impl RenderState {
                     1.0
                 };
 
-                let mut bubble_stack_offsets: HashMap<String, f32> = HashMap::new();
+                let mut bubble_stack_offsets: HashMap<u32, f32> = HashMap::new();
 
-                for (bi, bubble) in bubbles.iter().enumerate() {
+                for bi in (0..bubbles.len()).rev() {
+                    let bubble = &bubbles[bi];
                     let alpha = self.chat.bubble_alpha(bi).clamp(0.0, 1.0);
 
                     if alpha <= 0.01 {
@@ -662,7 +866,7 @@ impl RenderState {
 
                     let Some((_, player_pos, player_scale)) = bubble_anchors
                         .iter()
-                        .find(|(name, _, _)| name == &bubble.sender)
+                        .find(|(id, _, _)| *id == bubble.sender_id)
                     else {
                         continue;
                     };
@@ -676,7 +880,9 @@ impl RenderState {
                         screen_h,
                     );
 
-                    let body_r_px = 32.0 * player_scale.max(0.001) * zoom * screen_h * 0.5;
+                    let body_r_px = 21.0 * player_scale.max(0.001) * zoom * screen_h * 0.5;
+                    let label_scale = Renderer::label_scale(body_r_px);
+                    let label_top = sy - body_r_px - NAME_LABEL_GAP - NAME_LABEL_LINE * label_scale;
 
                     let (text_w, text_h) = Renderer::text_dimensions(&bubble.body);
 
@@ -687,9 +893,10 @@ impl RenderState {
 
                     const BUBBLE_PAD_X: f32 = 16.0;
                     const BUBBLE_PAD_Y: f32 = 10.0;
-                    const BUBBLE_GAP: f32 = 14.0;
+                    const BUBBLE_GAP: f32 = 6.0;
                     const BUBBLE_MIN_W: f32 = 32.0;
                     const BUBBLE_MIN_H: f32 = 24.0;
+                    const BUBBLE_RISE: f32 = 10.0;
                     const SCREEN_MARGIN: f32 = 8.0;
 
                     let max_w = (screen_w - SCREEN_MARGIN * 2.0).max(BUBBLE_MIN_W);
@@ -700,23 +907,13 @@ impl RenderState {
 
                     let h = (text_h + BUBBLE_PAD_Y).max(BUBBLE_MIN_H).min(max_h);
 
-                    let stack_offset = bubble_stack_offsets
-                        .entry(bubble.sender.clone())
-                        .or_insert(0.0);
+                    let pop = self.chat.bubble_pop(bi);
 
-                    let above_top = sy - body_r_px - BUBBLE_GAP - h - *stack_offset;
+                    let stack_offset = bubble_stack_offsets.entry(bubble.sender_id).or_insert(0.0);
 
-                    let below_top = sy + body_r_px + BUBBLE_GAP + *stack_offset;
+                    let bottom = label_top - BUBBLE_GAP - *stack_offset + (1.0 - pop) * BUBBLE_RISE;
 
-                    let preferred_top = if above_top >= SCREEN_MARGIN {
-                        above_top
-                    } else if below_top + h <= screen_h - SCREEN_MARGIN {
-                        below_top
-                    } else {
-                        above_top
-                    };
-
-                    let top = preferred_top.clamp(
+                    let top = (bottom - h).clamp(
                         SCREEN_MARGIN,
                         (screen_h - h - SCREEN_MARGIN).max(SCREEN_MARGIN),
                     );
@@ -738,10 +935,34 @@ impl RenderState {
 
                     bubble_rects.push((bi, left, top, w, h, alpha));
 
-                    *stack_offset += h + 4.0;
+                    *stack_offset += (h + 4.0) * pop;
                 }
             }
         }
+
+        self.world_instances = all_instances.len() as u32;
+
+        if mode == 0 && show_hud {
+            for notice in self.notices.entries.iter() {
+                let (w, _) = Renderer::text_dimensions(&notice.buffer);
+                let alpha = notice.alpha();
+
+                all_instances.push(rounded_ui_instance(
+                    Vec2::new(screen_w * 0.5, notice.y),
+                    Vec2::new(w + 32.0, NOTICE_H),
+                    screen,
+                    with_alpha(DARK_THEME.bar_background, alpha),
+                    with_alpha(DARK_THEME.scoreboard_row_border, alpha),
+                    3.0,
+                    8.0,
+                ));
+            }
+        }
+        all_instances.extend(ui_instances);
+        all_instances.extend(panel_instances);
+        all_instances.extend(chat_instances);
+        all_instances.extend(class_instances);
+        all_instances.extend(death_instances);
 
         self.num_instances = all_instances.len() as u32;
 
@@ -809,6 +1030,31 @@ impl RenderState {
             self.last_score_bar_text.clone_from(&self.score_text);
         }
 
+        for i in 0..self.net_buffers.len() {
+            if mode == 0 && self.net_text[i] != self.last_net_text[i] {
+                self.net_buffers[i].set_text(
+                    &self.net_text[i],
+                    &bold_attrs(),
+                    Shaping::Basic,
+                    None,
+                );
+
+                self.net_buffers[i].shape_until_scroll(&mut self.font_system, false);
+
+                self.last_net_text[i].clone_from(&self.net_text[i]);
+            }
+        }
+
+        if mode == 0 && self.name_text != self.last_name_text {
+            self.name_bar_buffer
+                .set_text(&self.name_text, &bold_attrs(), Shaping::Basic, None);
+
+            self.name_bar_buffer
+                .shape_until_scroll(&mut self.font_system, false);
+
+            self.last_name_text.clone_from(&self.name_text);
+        }
+
         if mode == 0 && self.level_text != self.last_level_text {
             self.level_bar_buffer
                 .set_text(&self.level_text, &bold_attrs(), Shaping::Basic, None);
@@ -833,20 +1079,10 @@ impl RenderState {
             self.debug_text_changed = false;
         }
 
+        let mut world_areas = Vec::with_capacity(256);
         let mut text_areas = Vec::with_capacity(256);
 
         if mode == 0 {
-            const OUTLINE_DIRS: [(f32, f32); 8] = [
-                (1.0, 0.0),
-                (-1.0, 0.0),
-                (0.0, 1.0),
-                (0.0, -1.0),
-                (1.0, 1.0),
-                (1.0, -1.0),
-                (-1.0, 1.0),
-                (-1.0, -1.0),
-            ];
-
             let text_border_thickness = 3.0;
             let text_border_color = to_glyphon(DARK_THEME.fill_border);
 
@@ -856,8 +1092,14 @@ impl RenderState {
                 1.0
             };
 
-            for entity in entities {
+            for entity in entities.iter().filter(|_| world_text) {
                 if let Some(text_comp) = entity.text {
+                    let alpha = entity.instance.fill_color[3].clamp(0.0, 1.0);
+
+                    if alpha <= 0.02 {
+                        continue;
+                    }
+
                     let (sx, sy) = Renderer::world_to_screen(
                         entity.instance.position,
                         camera_pos,
@@ -869,9 +1111,11 @@ impl RenderState {
 
                     let body_r_px = entity.instance.size[0] * zoom * screen_h * 0.25;
 
-                    let base_left = sx + text_comp.offset[0];
+                    let scale = Renderer::label_scale(body_r_px);
 
-                    let base_top = sy - body_r_px - 32.0;
+                    let base_left = sx + text_comp.offset[0] * scale;
+
+                    let base_top = sy - body_r_px - NAME_LABEL_GAP - NAME_LABEL_LINE * scale;
 
                     let bounds = TextBounds {
                         left: 0,
@@ -880,25 +1124,36 @@ impl RenderState {
                         bottom: self.config.height as i32,
                     };
 
+                    let outline = to_glyphon(with_alpha(DARK_THEME.fill_border, alpha));
+
+                    let fill = Color::rgba(
+                        text_comp.color.r(),
+                        text_comp.color.g(),
+                        text_comp.color.b(),
+                        (alpha * 255.0).round() as u8,
+                    );
+
+                    let thickness = (text_border_thickness * scale).max(2.0);
+
                     for (dx, dy) in OUTLINE_DIRS {
-                        text_areas.push(TextArea {
+                        world_areas.push(TextArea {
                             buffer: &text_comp.buffer,
-                            left: base_left + dx * text_border_thickness,
-                            top: base_top + dy * text_border_thickness,
-                            scale: 1.0,
+                            left: base_left + dx * thickness,
+                            top: base_top + dy * thickness,
+                            scale,
                             bounds,
-                            default_color: text_border_color,
+                            default_color: outline,
                             custom_glyphs: &[],
                         });
                     }
 
-                    text_areas.push(TextArea {
+                    world_areas.push(TextArea {
                         buffer: &text_comp.buffer,
                         left: base_left,
                         top: base_top,
-                        scale: 1.0,
+                        scale,
                         bounds,
-                        default_color: text_comp.color,
+                        default_color: fill,
                         custom_glyphs: &[],
                     });
                 }
@@ -931,7 +1186,7 @@ impl RenderState {
                 let outline = to_glyphon(with_alpha(DARK_THEME.fill_border, *alpha));
 
                 for (dx, dy) in OUTLINE_DIRS {
-                    text_areas.push(TextArea {
+                    world_areas.push(TextArea {
                         buffer: &bubble.body,
                         left: *left + 8.0 + dx * 1.5,
                         top: text_top + dy * 1.5,
@@ -942,7 +1197,7 @@ impl RenderState {
                     });
                 }
 
-                text_areas.push(TextArea {
+                world_areas.push(TextArea {
                     buffer: &bubble.body,
                     left: *left + 8.0,
                     top: text_top,
@@ -953,119 +1208,114 @@ impl RenderState {
                 });
             }
 
-            text_areas.push(TextArea {
-                buffer: &self.text_buffer,
-                left: 20.0,
-                top: 20.0,
-                scale: 1.0,
-                bounds: TextBounds {
-                    left: 0,
-                    top: 0,
-                    right: self.config.width as i32,
-                    bottom: self.config.height as i32,
-                },
-                default_color: Color::rgb(255, 255, 255),
-                custom_glyphs: &[],
-            });
+            let bounds = TextBounds {
+                left: 0,
+                top: 0,
+                right: self.config.width as i32,
+                bottom: self.config.height as i32,
+            };
 
-            {
-                let bar_cx = screen_w * 0.5;
-                let bar_cy = screen_h - SCORE_BAR_BOTTOM;
+            let white = Color::rgb(255, 255, 255);
+            let hud = Renderer::hud_layout(screen);
 
-                let text_w = Renderer::text_width(&self.score_bar_buffer);
+            if show_hud {
+                for notice in self.notices.entries.iter() {
+                    let alpha = notice.alpha();
 
-                let left = bar_cx - text_w * 0.5;
-                let top = bar_cy - 15.0;
+                    push_centered_text(
+                        &mut text_areas,
+                        &notice.buffer,
+                        hud.cx,
+                        notice.y,
+                        SCORE_TEXT_OUTLINE_PX,
+                        to_glyphon(with_alpha(DARK_THEME.fill_border, alpha)),
+                        Color::rgba(255, 255, 255, (alpha * 255.0) as u8),
+                        bounds,
+                    );
+                }
 
-                let bounds = TextBounds {
-                    left: 0,
-                    top: 0,
-                    right: self.config.width as i32,
-                    bottom: self.config.height as i32,
-                };
+                if !self.name_text.is_empty() {
+                    push_centered_text(
+                        &mut text_areas,
+                        &self.name_bar_buffer,
+                        hud.cx,
+                        hud.name_cy,
+                        3.0,
+                        text_border_color,
+                        white,
+                        bounds,
+                    );
+                }
 
-                for (dx, dy) in OUTLINE_DIRS {
+                push_centered_text(
+                    &mut text_areas,
+                    &self.score_bar_buffer,
+                    hud.cx,
+                    hud.score_cy,
+                    SCORE_TEXT_OUTLINE_PX,
+                    text_border_color,
+                    white,
+                    bounds,
+                );
+
+                push_centered_text(
+                    &mut text_areas,
+                    &self.level_bar_buffer,
+                    hud.cx,
+                    hud.level_cy,
+                    SCORE_TEXT_OUTLINE_PX,
+                    text_border_color,
+                    white,
+                    bounds,
+                );
+
+                let net_right = screen_w - minimap::MARGIN;
+                let mut net_bottom = screen_h - minimap::MARGIN - minimap::SIZE - 6.0;
+
+                for buffer in self.net_buffers.iter().rev() {
+                    let (w, h) = Renderer::text_dimensions(buffer);
+
+                    net_bottom -= h;
+
+                    for (dx, dy) in OUTLINE_DIRS {
+                        text_areas.push(TextArea {
+                            buffer,
+                            left: net_right - w + dx * 1.5,
+                            top: net_bottom + dy * 1.5,
+                            scale: 1.0,
+                            bounds,
+                            default_color: text_border_color,
+                            custom_glyphs: &[],
+                        });
+                    }
+
                     text_areas.push(TextArea {
-                        buffer: &self.score_bar_buffer,
-                        left: left + dx * SCORE_TEXT_OUTLINE_PX,
-                        top: top + dy * SCORE_TEXT_OUTLINE_PX,
+                        buffer,
+                        left: net_right - w,
+                        top: net_bottom,
                         scale: 1.0,
                         bounds,
-                        default_color: text_border_color,
+                        default_color: white,
                         custom_glyphs: &[],
                     });
                 }
-
-                text_areas.push(TextArea {
-                    buffer: &self.score_bar_buffer,
-                    left,
-                    top,
-                    scale: 1.0,
-                    bounds,
-                    default_color: Color::rgb(255, 255, 255),
-                    custom_glyphs: &[],
-                });
             }
 
-            {
-                let level_cy = screen_h
-                    - SCORE_BAR_BOTTOM
-                    - SCORE_BAR_H * 0.5
-                    - LEVEL_BAR_GAP
-                    - LEVEL_BAR_H * 0.5;
-
-                let text_w = Renderer::text_width(&self.level_bar_buffer);
-
-                let left = screen_w * 0.5 - text_w * 0.5;
-
-                let top = level_cy - 8.0;
-
-                let bounds = TextBounds {
-                    left: 0,
-                    top: 0,
-                    right: self.config.width as i32,
-                    bottom: self.config.height as i32,
-                };
-
-                for (dx, dy) in OUTLINE_DIRS {
-                    text_areas.push(TextArea {
-                        buffer: &self.level_bar_buffer,
-                        left: left + dx * SCORE_TEXT_OUTLINE_PX,
-                        top: top + dy * SCORE_TEXT_OUTLINE_PX,
-                        scale: 1.0,
-                        bounds,
-                        default_color: text_border_color,
-                        custom_glyphs: &[],
-                    });
-                }
-
+            if self.show_debug {
                 text_areas.push(TextArea {
-                    buffer: &self.level_bar_buffer,
-                    left,
-                    top,
+                    buffer: &self.text_buffer,
+                    left: 20.0,
+                    top: 20.0,
                     scale: 1.0,
                     bounds,
-                    default_color: Color::rgb(255, 255, 255),
+                    default_color: white,
                     custom_glyphs: &[],
                 });
-            }
 
-            {
-                let mut w = 0.0f32;
-
-                for run in self.debug_buffer.layout_runs() {
-                    w = w.max(run.line_w);
-                }
+                let (w, _) = Renderer::text_dimensions(&self.debug_buffer);
 
                 let left = screen_w - 20.0 - w;
                 let top = screen_h / 2.0;
-
-                let bounds = TextBounds {
-                    left: 0,
-                    top: 0,
-                    right: self.config.width as i32,
-                    bottom: self.config.height as i32,
-                };
 
                 for (dx, dy) in OUTLINE_DIRS {
                     text_areas.push(TextArea {
@@ -1085,7 +1335,7 @@ impl RenderState {
                     top,
                     scale: 1.0,
                     bounds,
-                    default_color: Color::rgba(0, 0, 0, 255),
+                    default_color: white,
                     custom_glyphs: &[],
                 });
             }
@@ -1094,6 +1344,17 @@ impl RenderState {
             text_areas.extend(panel_areas);
             text_areas.extend(chat_areas);
             text_areas.extend(class_areas);
+            text_areas.extend(death_areas);
+
+            let _ = self.world_text_renderer.prepare(
+                &self.device,
+                &self.queue,
+                &mut self.font_system,
+                &mut self.atlas,
+                &self.viewport,
+                world_areas,
+                &mut self.swash_cache,
+            );
 
             let _ = self.text_renderer.prepare(
                 &self.device,
@@ -1135,14 +1396,26 @@ impl RenderState {
                 multiview_mask: None,
             });
 
-            render_pass.set_pipeline(&self.render_pipeline);
-
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            let world = self.world_instances.min(self.num_instances);
 
             if mode < 2 {
+                render_pass.set_pipeline(&self.render_pipeline);
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                render_pass.draw(0..6, 0..world);
+            }
 
-                render_pass.draw(0..6, 0..self.num_instances);
+            if mode == 0 {
+                self.world_text_renderer
+                    .render(&self.atlas, &self.viewport, &mut render_pass)
+                    .unwrap();
+            }
+
+            if mode < 2 && world < self.num_instances {
+                render_pass.set_pipeline(&self.render_pipeline);
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                render_pass.draw(0..6, world..self.num_instances);
             }
 
             if mode == 0 {
@@ -1197,103 +1470,56 @@ impl Renderer {
             return;
         };
 
-        let game_state = Rc::clone(&self.game_state);
+        let releases: [(&web_sys::EventTarget, &str); 5] = [
+            (&document, "pointerup"),
+            (&document, "pointercancel"),
+            (&document, "mouseup"),
+            (&browser_window, "blur"),
+            (&document, "visibilitychange"),
+        ];
 
-        {
-            let game_state = Rc::clone(&game_state);
+        for (target, name) in releases {
+            let game_state = Rc::clone(&self.game_state);
             let redraw_window = Arc::clone(&window);
 
-            let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
-                let mut game = game_state.borrow_mut();
+            let closure =
+                Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+                    let mut game = game_state.borrow_mut();
 
-                game.auto_fire = false;
-                game.mouse_angle = None;
+                    let buttons = event
+                        .dyn_ref::<web_sys::MouseEvent>()
+                        .map(|e| e.buttons())
+                        .unwrap_or(0);
 
-                redraw_window.request_redraw();
-            });
+                    if buttons & 1 == 0 {
+                        game.fire_held = false;
+                        game.auto_fire = false;
+                    }
 
-            let _ = document
-                .add_event_listener_with_callback("pointerup", closure.as_ref().unchecked_ref());
+                    if buttons & 2 == 0 {
+                        game.repel_held = false;
+                        game.repel = false;
+                    }
+
+                    if event.dyn_ref::<web_sys::MouseEvent>().is_none() {
+                        game.shift_held = false;
+                    }
+
+                    redraw_window.request_redraw();
+                });
+
+            let _ = target.add_event_listener_with_callback(name, closure.as_ref().unchecked_ref());
 
             self.browser_input_handlers.push(closure);
         }
 
-        {
-            let game_state = Rc::clone(&game_state);
-            let redraw_window = Arc::clone(&window);
-
-            let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
-                let mut game = game_state.borrow_mut();
-
-                game.auto_fire = false;
-                game.mouse_angle = None;
-
-                redraw_window.request_redraw();
+        if let Some(canvas) = document.get_element_by_id("gameCanvas") {
+            let closure = Closure::<dyn FnMut(web_sys::Event)>::new(|event: web_sys::Event| {
+                event.prevent_default();
             });
 
-            let _ = document.add_event_listener_with_callback(
-                "pointercancel",
-                closure.as_ref().unchecked_ref(),
-            );
-
-            self.browser_input_handlers.push(closure);
-        }
-
-        {
-            let game_state = Rc::clone(&game_state);
-            let redraw_window = Arc::clone(&window);
-
-            let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
-                let mut game = game_state.borrow_mut();
-
-                game.auto_fire = false;
-                game.mouse_angle = None;
-
-                redraw_window.request_redraw();
-            });
-
-            let _ = document
-                .add_event_listener_with_callback("mouseup", closure.as_ref().unchecked_ref());
-
-            self.browser_input_handlers.push(closure);
-        }
-
-        {
-            let game_state = Rc::clone(&game_state);
-            let redraw_window = Arc::clone(&window);
-
-            let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
-                let mut game = game_state.borrow_mut();
-
-                game.auto_fire = false;
-                game.mouse_angle = None;
-
-                redraw_window.request_redraw();
-            });
-
-            let _ = browser_window
-                .add_event_listener_with_callback("blur", closure.as_ref().unchecked_ref());
-
-            self.browser_input_handlers.push(closure);
-        }
-
-        {
-            let game_state = Rc::clone(&game_state);
-            let redraw_window = Arc::clone(&window);
-
-            let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
-                let mut game = game_state.borrow_mut();
-
-                game.auto_fire = false;
-                game.mouse_angle = None;
-
-                redraw_window.request_redraw();
-            });
-
-            let _ = document.add_event_listener_with_callback(
-                "visibilitychange",
-                closure.as_ref().unchecked_ref(),
-            );
+            let _ = canvas
+                .add_event_listener_with_callback("contextmenu", closure.as_ref().unchecked_ref());
 
             self.browser_input_handlers.push(closure);
         }
@@ -1414,8 +1640,26 @@ impl Renderer {
         (width, height)
     }
 
-    fn text_width(buffer: &glyphon::Buffer) -> f32 {
-        Self::text_dimensions(buffer).0
+    fn label_scale(body_r_px: f32) -> f32 {
+        (body_r_px * 0.6 / NAME_LABEL_FONT).clamp(0.45, 1.6)
+    }
+
+    fn hud_layout(screen: Vec2) -> HudLayout {
+        let level_w = (screen.x * LEVEL_BAR_W_FRAC).min(LEVEL_BAR_MAX_W).max(1.0);
+        let score_w = level_w * SCORE_BAR_W_RATIO;
+
+        let level_cy = screen.y - LEVEL_BAR_BOTTOM - LEVEL_BAR_H * 0.5;
+        let score_cy = level_cy - LEVEL_BAR_H * 0.5 - LEVEL_BAR_GAP - SCORE_BAR_H * 0.5;
+        let name_cy = score_cy - SCORE_BAR_H * 0.5 - 28.0;
+
+        HudLayout {
+            cx: screen.x * 0.5,
+            level_w,
+            level_cy,
+            score_w,
+            score_cy,
+            name_cy,
+        }
     }
 
     fn view_bounds(
@@ -1502,14 +1746,29 @@ impl Renderer {
         game.tick_render(dt);
 
         for b in game.bullets.iter_mut() {
-            if now - b.last_update_time > BULLET_STALE_FADE_MS {
+            if b.dead {
+                if now - b.last_update_time >= 100.0 {
+                    b.dying = true;
+                }
+            } else if now - b.last_update_time > BULLET_STALE_FADE_MS {
                 b.dying = true;
 
-                b.render_alpha = (b.render_alpha - dt * 5.0).max(0.0);
+                b.render_alpha = (b.render_alpha - dt * 3.0).max(0.0);
             }
         }
 
         game.bullets
+            .retain(|b| b.render_alpha > 0.0 && (now - b.last_update_time) < BULLET_STALE_CULL_MS);
+
+        for b in game.drones.iter_mut() {
+            if now - b.last_update_time > BULLET_STALE_FADE_MS {
+                b.dying = true;
+
+                b.render_alpha = (b.render_alpha - dt * 3.0).max(0.0);
+            }
+        }
+
+        game.drones
             .retain(|b| b.render_alpha > 0.0 && (now - b.last_update_time) < BULLET_STALE_CULL_MS);
 
         // (owner conn id << 8) | (barrel index + 1)
@@ -1554,6 +1813,19 @@ impl Renderer {
         game.shapes.retain(|s| s.render_alpha > 0.0 || !s.dying);
 
         let my_player_id = game.my_player_id;
+        let spinning = game.auto_spin;
+
+        for p in game.players.iter_mut() {
+            if !p.dying
+                && Some(p.id) != my_player_id
+                && p.last_update_time > 0.0
+                && now - p.last_update_time > PLAYER_STALE_MS
+            {
+                p.dying = true;
+            }
+        }
+
+        game.players.retain(|p| !p.dying || p.render_alpha > 0.0);
 
         for p in game.players.iter_mut() {
             let alpha = ((now - p.last_update_time) / 100.0).clamp(0.0, 1.0) as f32;
@@ -1573,7 +1845,7 @@ impl Renderer {
             p.health_bar_alpha +=
                 (bar_target - p.health_bar_alpha) * (1.0 - (-HEALTH_BAR_FADE_SPEED * dt).exp());
 
-            if Some(p.id) != my_player_id {
+            if Some(p.id) != my_player_id || spinning {
                 let mut diff = p.rot - p.last_rot;
 
                 if diff > std::f32::consts::PI {
@@ -1585,6 +1857,15 @@ impl Renderer {
                 }
 
                 p.render_rot = p.last_rot + diff * alpha;
+            }
+
+            p.render_turret_aims.clear();
+            for (i, &aim) in p.turret_aims.iter().enumerate() {
+                let last = p.last_turret_aims.get(i).copied().unwrap_or(aim);
+                let diff = (aim - last + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                    - std::f32::consts::PI;
+
+                p.render_turret_aims.push(last + diff * alpha);
             }
         }
 
@@ -1624,7 +1905,7 @@ impl Renderer {
 
             b.render_pos = b.last_pos.lerp(b.pos, alpha);
 
-            if b.dying {
+            if b.dying && !b.dead {
                 let vel = (b.pos - b.last_pos) / 0.1;
 
                 b.render_pos += vel * dt * b.render_alpha;
@@ -1640,6 +1921,28 @@ impl Renderer {
                 diff += std::f32::consts::TAU;
             }
 
+            b.render_rot = if b.trap {
+                (now / 1000.0 * TRAP_SPIN) as f32 + b.id as f32
+            } else {
+                b.last_rot + diff * alpha
+            };
+        }
+
+        for b in game.drones.iter_mut() {
+            let alpha = ((now - b.last_update_time) / 100.0).clamp(0.0, 1.0) as f32;
+
+            b.render_pos = b.last_pos.lerp(b.pos, alpha);
+
+            if b.dying {
+                let vel = (b.pos - b.last_pos) / 0.1;
+
+                b.render_pos += vel * dt * b.render_alpha;
+            }
+
+            let diff = (b.rot - b.last_rot + std::f32::consts::PI)
+                .rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
+
             b.render_rot = b.last_rot + diff * alpha;
         }
 
@@ -1653,19 +1956,23 @@ impl Renderer {
     fn update_camera_and_aim(state: &mut RenderState, game: &mut GameState, dt: f32) {
         let has_player = game.my_player().is_some();
 
+        let target_zoom = if has_player {
+            camera_zoom(game.level, game.tank_info.field_factor)
+        } else {
+            PLAYER_ZOOM * SPECTATE_ZOOM_MULT
+        };
+
         if has_player && !state.had_player {
             if let Some(p) = game.my_player() {
                 state.player_display.snap_to(p.render_pos);
 
                 state.camera.snap_to(p.render_pos);
             }
+
+            state.camera.snap_zoom(target_zoom);
         }
 
         state.had_player = has_player;
-
-        let my_player_scale = game.my_player().map(|p| p.scale.max(0.001)).unwrap_or(1.0);
-
-        let target_zoom = PLAYER_ZOOM / my_player_scale;
 
         state.camera.update_zoom(target_zoom, dt);
 
@@ -1675,6 +1982,12 @@ impl Renderer {
             } else {
                 state.camera.pos = p.render_pos;
             }
+
+            state.spectate_follow.snap_to(p.render_pos);
+        } else if let Some(target) = game.spectate {
+            let pos = state.spectate_follow.update(target, dt);
+
+            state.camera.snap_to(pos);
         }
 
         if let Some(cursor) = state.cursor_pos {
@@ -1702,6 +2015,13 @@ impl Renderer {
                     aspect_ratio,
                 );
 
+                game.mouse_screen = Some([
+                    cursor.x.clamp(0.0, win_w) as u16,
+                    cursor.y.clamp(0.0, win_h) as u16,
+                    win_w.min(u16::MAX as f32) as u16,
+                    win_h.min(u16::MAX as f32) as u16,
+                ]);
+
                 if let Some(p) = game.my_player() {
                     let delta = Vec2::new(
                         cursor_world[0] - p.render_pos.x,
@@ -1715,9 +2035,10 @@ impl Renderer {
             }
         } else {
             game.mouse_angle = None;
+            game.mouse_screen = None;
         }
 
-        if let Some(target) = game.mouse_angle {
+        if let Some(target) = game.mouse_angle.filter(|_| !game.auto_spin) {
             if let Some(p) = game.my_player_mut() {
                 p.render_rot = target;
             }
@@ -1770,14 +2091,11 @@ impl Renderer {
 
             let sender = msg.sender.trim();
 
-            if sender.is_empty() {
-                continue;
-            }
-
             state.chat.receive(
                 &mut state.font_system,
                 msg.channel,
                 msg.team,
+                msg.sender_id,
                 sender,
                 text,
                 msg.timestamp,
@@ -1796,8 +2114,11 @@ impl Renderer {
         zoom: f32,
         aspect_ratio: f32,
     ) -> Vec<RenderEntity<'a>> {
-        const MAP_BOUND: f32 = 2500.0;
         const OUTSIDE_SIZE: f32 = 30000.0;
+        const ZONE_ALPHA: f32 = 0.16;
+        const WALL_BORDER: f32 = 4.0;
+
+        let map_bound = game.arena.bound;
 
         let outside = DARK_THEME.map_outside;
 
@@ -1823,7 +2144,7 @@ impl Renderer {
         instances.push(RenderEntity {
             instance: EntityInstance {
                 position: [0.0, 0.0],
-                size: [MAP_BOUND * 2.0, MAP_BOUND * 2.0],
+                size: [map_bound * 2.0, map_bound * 2.0],
                 rotation: 0.0,
                 shape_type: 2,
                 sides: 0,
@@ -1837,12 +2158,54 @@ impl Renderer {
 
         let (cull_min, cull_max) = Self::view_bounds(camera_pos, zoom, aspect_ratio, CULL_MARGIN);
 
+        for z in game.arena.zones.iter() {
+            let center = Vec2::new(z.x, z.y);
+
+            if !Self::is_visible(center, z.w.max(z.h) * 0.5, cull_min, cull_max) {
+                continue;
+            }
+
+            let tint = if z.team == NO_TEAM {
+                DARK_THEME.fallen_boss
+            } else {
+                team_color(z.team)
+            };
+
+            instances.push(RenderEntity {
+                instance: EntityInstance {
+                    position: [z.x, z.y],
+                    size: [z.w, z.h],
+                    rotation: 0.0,
+                    shape_type: 1,
+                    sides: 4,
+                    fill_color: with_alpha(tint, ZONE_ALPHA),
+                    border_color: with_alpha(tint, ZONE_ALPHA),
+                    border_thickness: 0.0,
+                    extra_param: 1.0,
+                },
+                text: None,
+            });
+        }
+
         for b in game.bullets.iter() {
             if !Self::is_visible(b.render_pos, BULLET_CULL_RADIUS, cull_min, cull_max) {
                 continue;
             }
 
             for inst in b.get_render_instances() {
+                instances.push(RenderEntity {
+                    instance: inst,
+                    text: None,
+                });
+            }
+        }
+
+        for d in game.drones.iter() {
+            if !Self::is_visible(d.render_pos, BULLET_CULL_RADIUS, cull_min, cull_max) {
+                continue;
+            }
+
+            for inst in d.get_render_instances() {
                 instances.push(RenderEntity {
                     instance: inst,
                     text: None,
@@ -1929,12 +2292,33 @@ impl Renderer {
             }
         }
 
+        for w in game.arena.walls.iter() {
+            let center = Vec2::new(w.x, w.y);
+
+            if !Self::is_visible(center, w.w.max(w.h) * 0.5, cull_min, cull_max) {
+                continue;
+            }
+
+            instances.push(RenderEntity {
+                instance: EntityInstance {
+                    position: [w.x, w.y],
+                    size: [w.w, w.h],
+                    rotation: 0.0,
+                    shape_type: 1,
+                    sides: 4,
+                    fill_color: DARK_THEME.maze_walls,
+                    border_color: DARK_THEME.outline_for(DARK_THEME.maze_walls),
+                    border_thickness: WALL_BORDER,
+                    extra_param: 1.0,
+                },
+                text: None,
+            });
+        }
+
         for p in game.players.iter() {
             let label = labels.get(&p.id);
 
-            let tank_instances = p.get_render_instances();
-
-            let body_idx = tank_instances.len().saturating_sub(1);
+            let (tank_instances, body_idx) = p.render_with_body();
 
             for (i, inst) in tank_instances.into_iter().enumerate() {
                 instances.push(RenderEntity {
@@ -2024,63 +2408,24 @@ impl Renderer {
             .iter()
             .find(|(n, _)| Some(n.as_str()) == my_name)
             .map(|e| e.1)
-            .unwrap_or(game.xp)
+            .unwrap_or(game.score)
+            .max(game.score)
     }
 
     fn build_hud_instances<'a>(
+        state: &mut RenderState,
         game: &GameState,
         screen: Vec2,
+        dt: f32,
         instances: &mut Vec<RenderEntity<'a>>,
     ) {
-        let bar_w = (screen.x * SCORE_BAR_W_FRAC).max(1.0);
+        let hud = Self::hud_layout(screen);
 
-        let bar_h = SCORE_BAR_H;
-
-        let bar_left = screen.x * 0.5 - bar_w * 0.5;
-
-        let bar_cy = screen.y - SCORE_BAR_BOTTOM;
-
-        let lvl_cy = bar_cy - bar_h * 0.5 - LEVEL_BAR_GAP - LEVEL_BAR_H * 0.5;
-
-        instances.push(RenderEntity {
-            instance: bar_ui_instance(
-                Vec2::new(bar_left + bar_w * 0.5, lvl_cy),
-                Vec2::new(bar_w, LEVEL_BAR_H),
-                screen,
-                DARK_THEME.bar_background,
-            ),
-            text: None,
-        });
-
-        let lvl_fill = if game.xp_to_next > 0 {
+        let level_target = if game.xp_to_next > 0 {
             (game.xp as f32 / game.xp_to_next as f32).clamp(0.0, 1.0)
         } else {
             1.0
         };
-
-        let lvl_w = bar_w * lvl_fill;
-
-        if lvl_w > 4.0 {
-            instances.push(RenderEntity {
-                instance: bar_ui_instance(
-                    Vec2::new(bar_left + lvl_w * 0.5, lvl_cy),
-                    Vec2::new(lvl_w, LEVEL_BAR_H),
-                    screen,
-                    DARK_THEME.xp_bar_fill,
-                ),
-                text: None,
-            });
-        }
-
-        instances.push(RenderEntity {
-            instance: bar_ui_instance(
-                Vec2::new(bar_left + bar_w * 0.5, bar_cy),
-                Vec2::new(bar_w, bar_h),
-                screen,
-                DARK_THEME.bar_background,
-            ),
-            text: None,
-        });
 
         let score = Self::my_score(game);
 
@@ -2092,26 +2437,69 @@ impl Renderer {
             .unwrap_or(0)
             .max(score);
 
-        let fill = if top > 0 {
+        let score_target = if top > 0 {
             (score as f32 / top as f32).clamp(0.0, 1.0)
         } else {
             0.0
         };
 
-        let fg_w = bar_w * fill;
+        let t = 1.0 - (-HUD_BAR_SPEED * dt).exp();
 
-        if fg_w > 2.0 {
-            let fg_w = fg_w.max(bar_h);
+        state.level_fill += (level_target - state.level_fill) * t;
+
+        state.score_fill += (score_target - state.score_fill) * t;
+
+        let bars = [
+            (
+                hud.score_w,
+                SCORE_BAR_H,
+                hud.score_cy,
+                state.score_fill,
+                DARK_THEME.score_bar_fill,
+            ),
+            (
+                hud.level_w,
+                LEVEL_BAR_H,
+                hud.level_cy,
+                state.level_fill,
+                DARK_THEME.xp_bar_fill,
+            ),
+        ];
+
+        for (w, h, cy, fill, color) in bars {
+            let left = hud.cx - w * 0.5 + HUD_BAR_OUTLINE;
 
             instances.push(RenderEntity {
-                instance: bar_ui_instance(
-                    Vec2::new(bar_left + fg_w * 0.5, bar_cy),
-                    Vec2::new(fg_w, bar_h),
+                instance: pill_instance(
+                    Vec2::new(hud.cx, cy),
+                    Vec2::new(w, h),
                     screen,
-                    DARK_THEME.score_bar_fill,
+                    HUD_BAR_TRACK,
+                    HUD_BAR_EDGE,
+                    HUD_BAR_OUTLINE,
                 ),
                 text: None,
             });
+
+            let inner_w = w - HUD_BAR_OUTLINE * 2.0;
+            let inner_h = h - HUD_BAR_OUTLINE * 2.0;
+            let fg_w = inner_w * fill;
+
+            if fg_w > 1.0 {
+                let fg_w = fg_w.max(inner_h);
+
+                instances.push(RenderEntity {
+                    instance: pill_instance(
+                        Vec2::new(left + fg_w * 0.5, cy),
+                        Vec2::new(fg_w, inner_h),
+                        screen,
+                        color,
+                        color,
+                        0.0,
+                    ),
+                    text: None,
+                });
+            }
         }
 
         instances.extend(
@@ -2141,7 +2529,36 @@ impl Renderer {
 
         state.level_text.clear();
 
-        let _ = write!(state.level_text, "Lvl {}", game.level);
+        let _ = write!(
+            state.level_text,
+            "Lvl {} {}",
+            game.level, game.tank_info.name
+        );
+
+        state.name_text.clear();
+
+        if let Some(p) = game.my_player() {
+            state.name_text.push_str(&p.name);
+        }
+
+        for line in state.net_text.iter_mut() {
+            line.clear();
+        }
+
+        match game.ping_ms {
+            Some(ping) => {
+                let _ = write!(state.net_text[0], "Ping {ping:.0} ms");
+            }
+            None => state.net_text[0].push_str("Ping -- ms"),
+        }
+
+        let _ = write!(state.net_text[0], "  |  Load {:.0}%", game.server_load);
+
+        let _ = write!(
+            state.net_text[1],
+            "Players {}  |  Bots {}  |  Shapes {}",
+            game.server_players, game.server_bots, game.server_shapes
+        );
     }
 
     fn fill_debug_text(state: &mut RenderState, game: &GameState) {
@@ -2239,13 +2656,11 @@ impl ApplicationHandler<RenderState> for Renderer {
 
         match event {
             WindowEvent::CloseRequested => {
-                state.mouse_left_down = false;
-
                 state.cursor_pos = None;
 
                 let mut game = state.game_state.borrow_mut();
 
-                game.auto_fire = false;
+                release_inputs(&mut game);
 
                 game.mouse_angle = None;
 
@@ -2287,25 +2702,23 @@ impl ApplicationHandler<RenderState> for Renderer {
             }
 
             WindowEvent::CursorLeft { .. } => {
-                state.mouse_left_down = false;
-
                 state.cursor_pos = None;
 
                 let mut game = state.game_state.borrow_mut();
 
-                game.auto_fire = false;
+                release_inputs(&mut game);
 
                 game.mouse_angle = None;
             }
 
             WindowEvent::Focused(false) => {
-                state.mouse_left_down = false;
-
                 state.cursor_pos = None;
 
                 let mut game = state.game_state.borrow_mut();
 
-                game.auto_fire = false;
+                release_inputs(&mut game);
+
+                game.shift_held = false;
 
                 game.mouse_angle = None;
             }
@@ -2315,19 +2728,40 @@ impl ApplicationHandler<RenderState> for Renderer {
                 button,
                 ..
             } => {
+                if button == MouseButton::Right {
+                    let mut game = state.game_state.borrow_mut();
+
+                    game.repel_held = mouse_state.is_pressed() && !state.chat.is_open();
+
+                    return;
+                }
+
                 if button != MouseButton::Left {
                     return;
                 }
 
                 match mouse_state {
                     winit::event::ElementState::Pressed => {
-                        state.mouse_left_down = true;
-
                         let Some(cursor) = state.cursor_pos else {
-                            state.game_state.borrow_mut().auto_fire = false;
+                            state.game_state.borrow_mut().fire_held = false;
 
                             return;
                         };
+
+                        if state.death.is_active() {
+                            let win = state.window.inner_size();
+                            let window_size = Vec2::new(win.width as f32, win.height as f32);
+                            let screen = Vec2::new(
+                                state.config.width as f32,
+                                state.config.height.max(1) as f32,
+                            );
+
+                            if state.death.hit_continue(cursor, window_size, screen) {
+                                continue_from_death(&mut state.death);
+                            }
+
+                            return;
+                        }
 
                         let win = state.window.inner_size();
 
@@ -2339,7 +2773,7 @@ impl ApplicationHandler<RenderState> for Renderer {
                         let mut game = state.game_state.borrow_mut();
 
                         if state.chat.is_open() {
-                            game.auto_fire = false;
+                            game.fire_held = false;
 
                             return;
                         }
@@ -2352,7 +2786,15 @@ impl ApplicationHandler<RenderState> for Renderer {
 
                                 game.chat_channel = channel;
 
-                                game.auto_fire = false;
+                                game.fire_held = false;
+
+                                return;
+                            }
+
+                            if state.class_panel.hit_ignore(cursor, window_size, screen) {
+                                state.class_panel.dismiss();
+
+                                game.fire_held = false;
 
                                 return;
                             }
@@ -2362,7 +2804,7 @@ impl ApplicationHandler<RenderState> for Renderer {
                             {
                                 game.class_choice = Some(idx as u8 + 1);
 
-                                game.auto_fire = false;
+                                game.fire_held = false;
 
                                 state.class_panel.set_pinned(false);
 
@@ -2378,7 +2820,7 @@ impl ApplicationHandler<RenderState> for Renderer {
                             {
                                 game.upgrade_request = Some(idx as u8 + 1);
 
-                                game.auto_fire = false;
+                                game.fire_held = false;
 
                                 web_sys::console::log_1(
                                     &format!("upgrade requested: [{}]", idx + 1).into(),
@@ -2388,27 +2830,40 @@ impl ApplicationHandler<RenderState> for Renderer {
                             }
                         }
 
-                        game.auto_fire = game.my_player().is_some();
+                        game.fire_held = game.my_player().is_some();
+
+                        game.fire_clicked = game.fire_held;
                     }
 
                     winit::event::ElementState::Released => {
-                        state.mouse_left_down = false;
-
                         let mut game = state.game_state.borrow_mut();
 
-                        game.auto_fire = false;
-
-                        game.mouse_angle = None;
+                        game.fire_held = false;
                     }
                 }
             }
 
             WindowEvent::RedrawRequested => {
-                if !state.mouse_left_down {
-                    state.game_state.borrow_mut().auto_fire = false;
+                {
+                    let mut game = state.game_state.borrow_mut();
+
+                    let alive = game.my_player().is_some();
+
+                    if alive {
+                        keep_canvas_focused();
+                    }
+
+                    let can_act = alive && !state.chat.is_open();
+
+                    game.auto_fire =
+                        (game.fire_held && can_act) || (game.auto_fire_toggle && alive);
+
+                    game.repel = (game.repel_held || game.shift_held) && can_act;
                 }
 
                 let (now, dt) = Self::begin_frame(state);
+
+                state.notices.tick(dt);
 
                 let screen =
                     Vec2::new(state.config.width as f32, state.config.height.max(1) as f32);
@@ -2433,13 +2888,56 @@ impl ApplicationHandler<RenderState> for Renderer {
 
                 let window_size = Vec2::new(win.width as f32, win.height as f32);
 
-                state
-                    .upgrade_panel
-                    .tick(dt, state.cursor_pos, window_size, screen);
+                state.upgrade_panel.sync(
+                    &mut state.font_system,
+                    &game.tank_info.stat_names,
+                    &game.tank_info.stat_maxes,
+                    game.upgrade_points,
+                );
 
-                state
-                    .class_panel
-                    .tick(&mut state.font_system, dt, game.class_upgrades_available);
+                state.upgrade_panel.tick(
+                    dt,
+                    state.cursor_pos,
+                    window_size,
+                    screen,
+                    game.upgrade_points,
+                );
+
+                state.class_panel.make_room(state.notices.bottom());
+
+                state.class_panel.tick(
+                    &mut state.font_system,
+                    dt,
+                    game.class_upgrades_available,
+                    state.cursor_pos,
+                    window_size,
+                    screen,
+                );
+
+                if let Some(info) = game.death.take() {
+                    state.death.show(&mut state.font_system, info);
+                    game.died_at = None;
+                }
+
+                if game.my_player().is_some() {
+                    state.death.hide();
+                }
+
+                if let Some(at) = game.died_at {
+                    if now - at > DEATH_FALLBACK_MS && !state.death.is_active() {
+                        game.died_at = None;
+                        crate::socket::show_home_screen();
+                        crate::socket::show_death_notice(true);
+                    }
+                }
+
+                state.death.tick(
+                    &mut state.font_system,
+                    dt,
+                    state.cursor_pos,
+                    window_size,
+                    screen,
+                );
 
                 Self::update_scoreboard(state, &game, dt);
 
@@ -2447,11 +2945,15 @@ impl ApplicationHandler<RenderState> for Renderer {
 
                 Self::update_chat(state, &mut game, now, dt);
 
+                let playing = game.my_player().is_some();
+
                 let instances = {
                     let mut instances =
                         Self::build_world_instances(&game, labels, camera_pos, zoom, aspect_ratio);
 
-                    Self::build_hud_instances(&game, screen, &mut instances);
+                    if playing {
+                        Self::build_hud_instances(state, &game, screen, dt, &mut instances);
+                    }
 
                     instances
                 };
@@ -2476,11 +2978,11 @@ impl ApplicationHandler<RenderState> for Renderer {
 
                 state.last_upgrade_levels = upgrade_levels;
 
-                let bubble_anchors: Vec<(String, Vec2, f32)> = game
+                let bubble_anchors: Vec<(u32, Vec2, f32)> = game
                     .players
                     .iter()
                     .filter(|p| !p.dying)
-                    .map(|p| (p.name.clone(), p.render_pos, p.scale))
+                    .map(|p| (p.id, p.render_pos, p.scale))
                     .collect();
 
                 drop(game);
@@ -2492,6 +2994,7 @@ impl ApplicationHandler<RenderState> for Renderer {
                     zoom,
                     upgrade_points,
                     &upgrade_levels,
+                    playing,
                 );
             }
 
@@ -2510,6 +3013,10 @@ impl ApplicationHandler<RenderState> for Renderer {
 
                 if state.chat.is_open() {
                     let mut game = state.game_state.borrow_mut();
+
+                    if matches!(code, KeyCode::ShiftLeft | KeyCode::ShiftRight) {
+                        game.shift_held = pressed;
+                    }
 
                     match code {
                         KeyCode::Enter | KeyCode::NumpadEnter => {
@@ -2536,7 +3043,7 @@ impl ApplicationHandler<RenderState> for Renderer {
                             if pressed && !repeat {
                                 state.chat.close_input(&mut state.font_system);
 
-                                game.auto_fire = false;
+                                release_inputs(&mut game);
                             }
                         }
 
@@ -2581,6 +3088,12 @@ impl ApplicationHandler<RenderState> for Renderer {
                         game.move_right = pressed;
                     }
 
+                    KeyCode::Enter | KeyCode::NumpadEnter if state.death.is_active() => {
+                        if pressed && !repeat {
+                            continue_from_death(&mut state.death);
+                        }
+                    }
+
                     KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::KeyT => {
                         if pressed && !repeat {
                             state.chat.open_input();
@@ -2593,7 +3106,49 @@ impl ApplicationHandler<RenderState> for Renderer {
 
                             game.move_right = false;
 
-                            game.auto_fire = false;
+                            release_inputs(&mut game);
+                        }
+                    }
+
+                    KeyCode::ShiftLeft | KeyCode::ShiftRight => {
+                        game.shift_held = pressed;
+                    }
+
+                    KeyCode::KeyE => {
+                        if pressed && !repeat {
+                            game.auto_fire_toggle = !game.auto_fire_toggle;
+
+                            state.notices.push(
+                                &mut state.font_system,
+                                if game.auto_fire_toggle {
+                                    "Auto Fire: ON"
+                                } else {
+                                    "Auto Fire: OFF"
+                                },
+                            );
+                        }
+                    }
+
+                    KeyCode::KeyC => {
+                        if pressed && !repeat {
+                            game.auto_spin = !game.auto_spin;
+
+                            state.notices.push(
+                                &mut state.font_system,
+                                if game.auto_spin {
+                                    "Auto Spin: ON"
+                                } else {
+                                    "Auto Spin: OFF"
+                                },
+                            );
+                        }
+                    }
+
+                    KeyCode::Backquote => {
+                        if pressed && !repeat {
+                            state.show_debug = !state.show_debug;
+
+                            state.debug_dirty = true;
                         }
                     }
 
@@ -2738,6 +3293,39 @@ impl ApplicationHandler<RenderState> for Renderer {
     }
 }
 
+fn continue_from_death(death: &mut DeathScreen) {
+    death.hide();
+    crate::socket::show_home_screen();
+    crate::socket::show_death_notice(true);
+}
+
+fn keep_canvas_focused() {
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+
+    if document
+        .active_element()
+        .is_some_and(|e| e.id() == "gameCanvas")
+    {
+        return;
+    }
+
+    if let Some(canvas) = document
+        .get_element_by_id("gameCanvas")
+        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let _ = canvas.focus();
+    }
+}
+
+fn release_inputs(game: &mut GameState) {
+    game.fire_held = false;
+    game.repel_held = false;
+    game.auto_fire = false;
+    game.repel = false;
+}
+
 pub struct TextComponent {
     pub buffer: glyphon::Buffer,
     pub color: Color,
@@ -2749,12 +3337,7 @@ impl TextComponent {
     pub fn new(font_system: &mut FontSystem, initial_text: &str) -> Self {
         let mut buffer = glyphon::Buffer::new(font_system, Metrics::new(24.0, 28.0));
 
-        buffer.set_text(
-            initial_text,
-            &Attrs::new().family(glyphon::Family::SansSerif),
-            Shaping::Basic,
-            None,
-        );
+        buffer.set_text(initial_text, &bold_attrs(), Shaping::Basic, None);
 
         buffer.shape_until_scroll(font_system, false);
 
@@ -2786,12 +3369,8 @@ impl TextComponent {
     }
 
     pub fn update_text(&mut self, font_system: &mut FontSystem, new_text: &str) {
-        self.buffer.set_text(
-            new_text,
-            &Attrs::new().family(glyphon::Family::SansSerif),
-            Shaping::Basic,
-            None,
-        );
+        self.buffer
+            .set_text(new_text, &bold_attrs(), Shaping::Basic, None);
 
         self.buffer.shape_until_scroll(font_system, false);
 

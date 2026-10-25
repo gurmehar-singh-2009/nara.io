@@ -2,14 +2,14 @@ use crate::{
     entities::Entity,
     render::{
         buffers::EntityInstance,
-        colours::{DARK_THEME, with_alpha},
+        colours::{DARK_THEME, entity_color, with_alpha},
     },
 };
 
 const FADE_IN: f32 = 0.10;
 const FADE_OUT: f32 = 0.25;
-
-const TEAM_BLUE: [f32; 4] = [0.22, 0.55, 0.98, 1.0];
+const DEATH_GROWTH: f32 = 0.5;
+const TRAP_SCALE: f32 = 1.6;
 
 pub struct Bullet {
     pub id: u32,
@@ -24,7 +24,10 @@ pub struct Bullet {
     pub radius: f32,
     pub recoil: u32,
     pub is_mine: bool,
+    pub team: u8,
     pub is_new: bool,
+    pub trap: bool,
+    pub dead: bool,
     pub dying: bool,
     pub render_alpha: f32,
 }
@@ -45,7 +48,10 @@ impl Bullet {
             radius: 8.0,
             recoil: 0,
             is_mine: false,
+            team: shared::packets::NO_TEAM,
             is_new: true,
+            trap: false,
+            dead: false,
             dying: false,
             render_alpha: 0.0,
         }
@@ -66,21 +72,28 @@ impl Bullet {
 
 impl Entity for Bullet {
     fn get_render_instances(&self) -> Vec<EntityInstance> {
-        let diameter = self.radius * 2.0;
-
-        let fill = if self.is_mine {
-            TEAM_BLUE
+        let pop = if self.dying {
+            1.0 + (1.0 - self.render_alpha) * DEATH_GROWTH
         } else {
-            DARK_THEME.team_red
+            1.0
         };
+        let diameter = self.radius * 2.0 * pop;
+
+        let fill = entity_color(self.team, self.is_mine);
         let outline = DARK_THEME.outline_for(fill);
+
+        let (size, shape_type, sides) = if self.trap {
+            (diameter * TRAP_SCALE, 3, 3)
+        } else {
+            (diameter, 0, 0)
+        };
 
         vec![EntityInstance {
             position: [self.render_pos.x, self.render_pos.y],
-            size: [diameter, diameter],
+            size: [size, size],
             rotation: self.render_rot,
-            shape_type: 0,
-            sides: 0,
+            shape_type,
+            sides,
             fill_color: with_alpha(fill, self.render_alpha),
             border_color: with_alpha(outline, self.render_alpha),
             border_thickness: (self.radius * 0.35).clamp(2.0, 6.0),

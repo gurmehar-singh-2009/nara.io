@@ -37,10 +37,19 @@ pub async fn start() {
         players: vec![],
         shapes: vec![],
         bullets: vec![],
+        drones: vec![],
 
         movement_dir: None,
         mouse_angle: None,
+        mouse_screen: None,
         auto_fire: false,
+        auto_fire_toggle: false,
+        auto_spin: false,
+        repel: false,
+        fire_held: false,
+        fire_clicked: false,
+        repel_held: false,
+        shift_held: false,
 
         move_up: false,
         move_down: false,
@@ -48,6 +57,7 @@ pub async fn start() {
         move_right: false,
 
         level: 1,
+        score: 0,
         xp: 0,
         xp_to_next: 5,
         health: 100,
@@ -55,7 +65,7 @@ pub async fn start() {
 
         leaderboard: vec![],
         upgrade_request: None,
-        upgrade_levels: [0, 1, 2, 3, 4, 5, 6, 7],
+        upgrade_levels: [0; 8],
         upgrade_points: 0,
 
         chat_message: None,
@@ -63,24 +73,46 @@ pub async fn start() {
         incoming_chat: Vec::new(),
         class_upgrades_available: false,
         class_choice: None,
+
+        arena: Default::default(),
+        tank_info: Default::default(),
+
+        ping_ms: None,
+        server_load: 0.0,
+        server_players: 0,
+        server_bots: 0,
+        server_shapes: 0,
+        spectate: None,
+
+        death: None,
+        died_at: None,
     }));
     let game_state_for_socket = Rc::clone(&game_state);
 
-    let closure = Closure::<dyn FnMut()>::new(move || {
+    let connect = Closure::<dyn FnMut()>::new(move || {
         let game_state = Rc::clone(&game_state_for_socket);
 
         spawn_local(async move {
-            Socket::new(game_state, "wss://naraioserver.hackclub.app".into()).await;
+            Socket::new(game_state, "ws://localhost:8080".into()).await;
         });
     });
 
     web_sys::console::log_1(&format!("PACKET SEED: {}", PACKET_SEED).into());
 
-    window
-        .add_event_listener_with_callback("load", closure.as_ref().unchecked_ref())
-        .unwrap();
+    let document = window.document().unwrap();
 
-    closure.forget();
+    if document.ready_state() == "loading" {
+        document
+            .add_event_listener_with_callback("DOMContentLoaded", connect.as_ref().unchecked_ref())
+            .unwrap();
+    } else {
+        let _ = connect
+            .as_ref()
+            .unchecked_ref::<js_sys::Function>()
+            .call0(&JsValue::NULL);
+    }
+
+    connect.forget();
 
     let event_loop = EventLoop::with_user_event().build().unwrap();
     let render = Renderer::new(&event_loop, Rc::clone(&game_state));

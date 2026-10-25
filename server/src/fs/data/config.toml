@@ -1,6 +1,7 @@
 [game]
 max_players = 60
 max_level = 45
+plugins = ["4tdm"]
 
 [world]
 map_bound = 2500
@@ -15,6 +16,8 @@ view_enter_rad = 1200
 view_exit_rad = 1500
 
 num_teams = 2
+base_push = 900
+shape_clearance = 40
 
 chat_window_ms = 10_000
 chat_burst = 5
@@ -25,6 +28,11 @@ chat_max_chars = 120
 speed = 140
 radius = 21
 default_health = 100
+health_mult = 2.0
+health_per_level = 4.0
+auto_spin_speed = 1.0
+kill_score_frac = 0.8
+assist_window = 10.0
 
 collision_slop = 0.05
 collision_correction = 0.9
@@ -59,6 +67,89 @@ base_health = 10
 recoil_impulse = 12
 recoil_decay = 2
 recoil_max = 400
+scatter_degrees = 10.0
+
+[trap]
+lifetime = 2.0
+drag = 4.0
+speed_mult = 1.0
+
+[turret]
+range = 450
+turn_speed = 7.0
+reload = 0.6
+damage_mult = 0.4
+bullet_speed_mult = 1.0
+bullet_health_mult = 0.5
+bullet_radius = 6.0
+muzzle = 1.3
+aim_tolerance = 0.25
+
+[[turret.layouts]]
+addon = 84
+count = 3
+distance = 0.8
+
+[[turret.layouts]]
+addon = 89
+count = 5
+distance = 0.8
+
+[[turret.layouts]]
+addon = 88
+count = 1
+distance = 0.0
+
+[[turret.layouts]]
+addon = 90
+count = 1
+distance = 0.0
+
+[[turret.layouts]]
+addon = 91
+count = 1
+distance = 0.0
+
+[base]
+drone_count = 6
+drone_radius = 18
+drone_speed = 520
+drone_damage = 250
+drone_health = 100000
+chase_margin = 250
+respawn_seconds = 5.0
+
+[spectate]
+cell = 400
+interval = 10
+stickiness = 1.3
+travel_speed = 700
+min_travel = 0.8
+max_travel = 4.0
+death_cam = 3.0
+
+[drone]
+speed_mult = 1.6
+speed_per_stat = 0.15
+drag = 2.634
+spawn_speed_frac = 0.95
+uncapped_lifetime = 3.52
+ai_range = 378
+
+rest_radius = 168
+rest_accel_mult = 0.1667
+rest_turn_base = 0.25
+rest_turn_per = 0.3
+return_slow_mult = 0.333
+orbit_radii = 1.2
+rest_enter_radii = 2.0
+bot_reach = 260
+
+hit_cooldown = 0.25
+contact_push = 2100
+drone_push = 1050
+target_push = 1050
+shape_push = 40
 
 [anticheat]
 min_upgrade_interval_ms = 250

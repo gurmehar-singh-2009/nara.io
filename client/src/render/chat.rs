@@ -23,6 +23,7 @@ use glyphon::{
     Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds,
     cosmic_text::{Style, Weight},
 };
+use shared::packets::NO_SENDER;
 
 use crate::{
     render::{
@@ -44,7 +45,9 @@ const BUBBLE_FONT: f32 = 16.0;
 const BUBBLE_LINE: f32 = 19.0;
 const BUBBLE_MAX_W: f32 = 200.0;
 const BUBBLE_MAX_CHARS: usize = 40;
-const BUBBLE_MAX_ACTIVE: usize = 12;
+const BUBBLE_MAX_ACTIVE: usize = 24;
+const BUBBLE_PER_SENDER: usize = 3;
+const BUBBLE_POP_S: f64 = 0.18;
 
 const TAB_W: f32 = 110.0;
 const TAB_H: f32 = 28.0;
@@ -64,16 +67,16 @@ const INPUT_FONT: f32 = 18.0;
 const INPUT_LINE: f32 = 22.0;
 const INPUT_H: f32 = 34.0;
 const INPUT_SPEED: f32 = 14.0;
+const INPUT_SLIDE_PX: f32 = 14.0;
 
 const MAX_LOG: usize = 350;
 const VISIBLE_HISTORY: usize = 9;
 const MAX_SHOWN_LINES: usize = 15;
 const MAX_INPUT_CHARS: usize = 80; // can always change later
-const MSG_LIFETIME_S: f64 = 10.0;
-const MSG_FADE_S: f64 = 2.0;
-const BLINK_MS: f64 = 500.0;
+const BLINK_S: f64 = 0.5;
 const PANEL_RADIUS: f32 = 12.0;
 const PANEL_SPEED: f32 = 10.0;
+const IDLE_PANEL_ALPHA: f32 = 0.8;
 
 const MSG_SLIDE_IN_S: f64 = 0.22;
 const MSG_SLIDE_PX: f32 = 26.0;
@@ -84,6 +87,7 @@ const TEXT_OUTLINE_PX: f32 = 1.5;
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const SYSTEM_COLOR: [f32; 4] = [0.72, 0.72, 0.76, 1.0];
 const TIME_COLOR: [f32; 4] = [0.85, 0.85, 0.85, 1.0];
+const HINT_COLOR: [f32; 4] = [0.75, 0.75, 0.78, 1.0];
 
 fn bold() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif).weight(Weight::BOLD)
@@ -152,7 +156,8 @@ fn team_tag(team: u8) -> (&'static str, [f32; 4]) {
     match team {
         0 => ("[Blue]", DARK_THEME.team_blue),
         1 => ("[Red]", DARK_THEME.team_red),
-        2 => ("[Purple]", DARK_THEME.team_purple),
+        2 => ("[Green]", DARK_THEME.team_green),
+        3 => ("[Purple]", DARK_THEME.team_purple),
         _ => ("[Team]", WHITE),
     }
 }
@@ -194,6 +199,7 @@ impl ChatMessage {
 }
 
 pub struct ChatBubble {
+    pub sender_id: u32,
     pub sender: String,
     pub body: Buffer,
     pub lines: usize,
@@ -206,6 +212,8 @@ pub struct ChatPanel {
     active: ChatChannel,
     input: String,
     input_buffer: Buffer,
+    closing_buffer: Buffer,
+    hint_buffer: Buffer,
     // the `_` cursor thingy
     cursor_buffer: Buffer,
     tab_global: Buffer,
@@ -234,6 +242,13 @@ impl ChatPanel {
             active: ChatChannel::Global,
             input: String::new(),
             input_buffer: make_buffer(fs, Metrics::new(INPUT_FONT, INPUT_LINE), ""),
+            closing_buffer: make_buffer(fs, Metrics::new(INPUT_FONT, INPUT_LINE), ""),
+            hint_buffer: make_buffer_attrs(
+                fs,
+                Metrics::new(INPUT_FONT, INPUT_LINE),
+                "Say something...",
+                &italic(),
+            ),
             cursor_buffer: make_buffer(fs, Metrics::new(INPUT_FONT, INPUT_LINE), "_"),
             tab_global: make_buffer(fs, Metrics::new(TAB_FONT, TAB_LINE), "Global"),
             tab_team: make_buffer(fs, Metrics::new(TAB_FONT, TAB_LINE), "Team"),
@@ -273,7 +288,12 @@ impl ChatPanel {
     }
 
     pub fn close_input(&mut self, fs: &mut glyphon::FontSystem) {
+        if !self.input_active {
+            return;
+        }
+
         self.input_active = false;
+        std::mem::swap(&mut self.input_buffer, &mut self.closing_buffer);
         self.input.clear();
         self.reshape_input(fs);
     }
@@ -317,11 +337,13 @@ impl ChatPanel {
         fs: &mut glyphon::FontSystem,
         channel: ChatChannel,
         team: u8,
+        sender_id: u32,
         sender: &str,
         text: &str,
         timestamp: u64,
     ) {
-        let is_system = sender.is_empty();
+        let is_system = sender_id == NO_SENDER;
+        let sender = if sender.is_empty() { "Unnamed" } else { sender };
 
         let tag = if is_system || channel != ChatChannel::Global {
             None
@@ -381,7 +403,16 @@ impl ChatPanel {
         }
 
         if !is_system {
-            self.bubbles.retain(|b| b.sender != sender);
+            let from_sender = self
+                .bubbles
+                .iter()
+                .filter(|b| b.sender_id == sender_id)
+                .count();
+            if from_sender >= BUBBLE_PER_SENDER {
+                if let Some(oldest) = self.bubbles.iter().position(|b| b.sender_id == sender_id) {
+                    self.bubbles.remove(oldest);
+                }
+            }
 
             let shown = if text.chars().count() > BUBBLE_MAX_CHARS {
                 let mut s: String = text.chars().take(BUBBLE_MAX_CHARS - 1).collect();
@@ -398,6 +429,7 @@ impl ChatPanel {
             let lines = bubble_body.layout_runs().count().max(1);
 
             self.bubbles.push(ChatBubble {
+                sender_id,
                 sender: sender.to_string(),
                 body: bubble_body,
                 lines,
@@ -416,35 +448,19 @@ impl ChatPanel {
         }
     }
 
-    fn message_alpha(&self, m: &ChatMessage) -> f32 {
-        if self.input_active {
-            return 1.0;
-        }
+    pub fn tick(&mut self, now_ms: f64, dt: f32) {
+        self.now = now_ms / 1000.0;
 
-        let age = self.now - m.born_at;
-
-        (((MSG_LIFETIME_S - age) / MSG_FADE_S) as f32).clamp(0.0, 1.0)
-    }
-
-    pub fn tick(&mut self, now: f64, dt: f32) {
-        self.now = now;
-
-        if now - self.last_blink >= BLINK_MS {
+        if self.now - self.last_blink >= BLINK_S {
             self.cursor_on = !self.cursor_on;
-            self.last_blink = now;
+            self.last_blink = self.now;
         }
 
-        let any_visible = self
-            .messages_for(self.active)
-            .iter()
-            .any(|m| self.message_alpha(m) > 0.01);
-
-        let panel_target =
-            if self.input_active || any_visible || self.flash[0] > 0.05 || self.flash[1] > 0.05 {
-                1.0
-            } else {
-                0.0
-            };
+        let panel_target = if self.input_active || self.flash[0] > 0.05 || self.flash[1] > 0.05 {
+            1.0
+        } else {
+            IDLE_PANEL_ALPHA
+        };
         self.panel_alpha = lerp_toward(self.panel_alpha, panel_target, PANEL_SPEED, dt);
 
         let input_target = if self.input_active { 1.0 } else { 0.0 };
@@ -476,7 +492,18 @@ impl ChatPanel {
         match self.bubbles.get(i) {
             Some(b) => {
                 let age = self.now - b.born_at;
-                (((BUBBLE_LIFETIME_S - age) / BUBBLE_FADE_S) as f32).clamp(0.0, 1.0)
+                let fade_out = ((BUBBLE_LIFETIME_S - age) / BUBBLE_FADE_S) as f32;
+                fade_out.clamp(0.0, 1.0) * self.bubble_pop(i)
+            }
+            None => 0.0,
+        }
+    }
+
+    pub fn bubble_pop(&self, i: usize) -> f32 {
+        match self.bubbles.get(i) {
+            Some(b) => {
+                let t = ((self.now - b.born_at) / BUBBLE_POP_S).clamp(0.0, 1.0) as f32;
+                1.0 - (1.0 - t).powi(3)
             }
             None => 0.0,
         }
@@ -532,13 +559,7 @@ impl ChatPanel {
         let mut lines = 0usize;
 
         for m in msgs.iter().rev() {
-            if self.input_active && shown.len() >= VISIBLE_HISTORY {
-                break;
-            }
-            if !self.input_active && self.message_alpha(m) <= 0.01 {
-                continue;
-            }
-            if lines >= MAX_SHOWN_LINES {
+            if shown.len() >= VISIBLE_HISTORY || lines >= MAX_SHOWN_LINES {
                 break;
             }
             shown.push(m);
@@ -546,8 +567,9 @@ impl ChatPanel {
         }
         shown.reverse();
 
+        let input_ease = 1.0 - (1.0 - self.input_t).powi(3);
         let log_h: f32 = shown.iter().map(|m| m.height()).sum();
-        let input_h = (INPUT_H + 8.0) * self.input_t;
+        let input_h = (INPUT_H + 8.0) * input_ease;
 
         let bg_h = PAD + TAB_H + 8.0 + log_h + input_h + PAD;
 
@@ -617,7 +639,7 @@ impl ChatPanel {
             let t_in = (age / MSG_SLIDE_IN_S).clamp(0.0, 1.0) as f32;
             let eased = 1.0 - (1.0 - t_in).powi(3);
             let x_off = -MSG_SLIDE_PX * (1.0 - eased);
-            let alpha = self.message_alpha(m) * eased * alpha_p;
+            let alpha = eased * alpha_p;
 
             if alpha <= 0.01 {
                 continue;
@@ -677,30 +699,41 @@ impl ChatPanel {
         }
 
         if self.input_t > 0.02 {
-            let row_top = log_top + log_h + 8.0 * self.input_t;
-            let h = INPUT_H * self.input_t;
+            let row_top = log_top + log_h + 8.0 * input_ease;
+            let h = INPUT_H * input_ease;
+            let slide = INPUT_SLIDE_PX * (1.0 - input_ease);
+            let a = self.input_t * alpha_p;
 
             instances.push(bar_ui_instance(
                 Vec2::new(LEFT + WIDTH * 0.5, row_top + h * 0.5),
                 Vec2::new(WIDTH - 2.0 * PAD, h),
                 screen,
-                with_alpha(DARK_THEME.scoreboard_row, alpha_p),
+                with_alpha(DARK_THEME.scoreboard_row, a),
             ));
 
             let text_left = LEFT + PAD + 4.0;
-            let text_top = row_top + (INPUT_H - INPUT_LINE) * 0.5;
-            let a = self.input_t * alpha_p;
+            let text_top = row_top + (h - INPUT_LINE) * 0.5 + slide;
 
-            push_outlined(
-                &mut areas,
-                &self.input_buffer,
-                text_left,
-                text_top,
-                screen,
-                a,
-            );
+            let buffer = if self.input_active {
+                &self.input_buffer
+            } else {
+                &self.closing_buffer
+            };
 
-            if self.cursor_on {
+            if self.input_active && self.input.is_empty() {
+                push_outlined_color(
+                    &mut areas,
+                    &self.hint_buffer,
+                    text_left,
+                    text_top,
+                    screen,
+                    with_alpha(HINT_COLOR, a * 0.7),
+                );
+            } else {
+                push_outlined(&mut areas, buffer, text_left, text_top, screen, a);
+            }
+
+            if self.input_active && self.cursor_on {
                 let cursor_left = text_left + measure(&self.input_buffer) + 2.0;
 
                 push_outlined(

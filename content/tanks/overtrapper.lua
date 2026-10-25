@@ -48,9 +48,9 @@ return {
                 damage = 1,
                 speed = 2,
                 scatterRate = 1,
-                lifeLength = 1,
+                lifeLength = 8,
                 absorbtionFactor = 1,
-                sizeRatio = 1,
+                sizeRatio = 0.8,
             },
         },
         {

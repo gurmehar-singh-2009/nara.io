@@ -16,8 +16,8 @@
 
         
 <script type="module">
-import init, * as bindings from '/client-24662476600af290.js';
-const wasm = await init({ module_or_path: '/client-2e6d0a3a8a280ec4_bg.wasm' });
+import init, * as bindings from '/client-8eca0df7b80f4838.js';
+const wasm = await init({ module_or_path: '/client-79a8b02714490f34_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -305,8 +305,12 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 left: 0;
                 width: 100vw;
                 height: 100vh;
+                z-index: 1;
+                display: block;
+            }
+
+            body.playing #gameCanvas {
                 z-index: 20;
-                display: none;
             }
 
             .discord-btn {
@@ -362,16 +366,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 font-size: 1.25rem;
             }
 
-            #background {
-                position: fixed;
-                inset: 0;
-                background-image: url("./assets/cc.png");
-                background-size: cover;
-                background-position: center;
-                z-index: 1;
-                will-change: transform;
-            }
-
             .screen-overlay {
                 position: fixed;
                 top: 0;
@@ -379,8 +373,8 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 width: 100%;
                 height: 100%;
                 z-index: 2;
-                backdrop-filter: blur(4px);
-                background-color: rgba(0, 0, 0, 0.5);
+                backdrop-filter: blur(2px);
+                background-color: rgba(0, 0, 0, 0.35);
             }
 
             .side-drawer {
@@ -866,11 +860,10 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 color: #555555 !important;
             }
         </style>
-    <link rel="modulepreload" href="/client-24662476600af290.js" crossorigin="anonymous" integrity="sha384-eNu3FqxKOGFWWYMz6zTgeBabmtp8Q4CLGPT/hpKcd+0SyzZ/tH9zv8nkWb1KhnRr"><link rel="preload" href="/client-2e6d0a3a8a280ec4_bg.wasm" crossorigin="anonymous" integrity="sha384-u30UV+G/qpKLfXy4pOv4Jftk464OEP1skguADlryw7WfpYBG0/yoWGd0LAQYZYqm" as="fetch" type="application/wasm"></head>
+    <link rel="modulepreload" href="/client-8eca0df7b80f4838.js" crossorigin="anonymous" integrity="sha384-32WF+wtHKUc5ZFvScmjX4SkC8ObnjsFUuekYdERFyu/jJ1gxp18G2spqPPn3ZrFG"><link rel="preload" href="/client-79a8b02714490f34_bg.wasm" crossorigin="anonymous" integrity="sha384-Xwez9PnhbmS7dEdyIRIAlEsnhn1IBK79APgqIetLZKy3PZS+wZEAQBKKOutw5Cpz" as="fetch" type="application/wasm"></head>
     <body
         class="h-screen w-screen relative flex flex-col justify-between p-3 overflow-hidden"
     >
-        <div id="background"></div>
         <div class="screen-overlay"></div>
         <canvas id="gameCanvas"></canvas>
 
@@ -1492,32 +1485,9 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
             document
                 .getElementById("playButton")
                 .addEventListener("click", () => {
-                    document.getElementById("gameCanvas").style.display =
-                        "block";
+                    document.body.classList.add("playing");
                     document.getElementById("uiOverlay").style.display = "none";
                 });
-            const bg = document.getElementById("background");
-            let targetX = 0,
-                targetY = 0,
-                currentX = 0,
-                currentY = 0,
-                lastTime = performance.now();
-            const SMOOTHING_SPEED = 4.5;
-            document.addEventListener("mousemove", (e) => {
-                targetX = (e.clientX / window.innerWidth - 0.5) * 150;
-                targetY = (e.clientY / window.innerHeight - 0.5) * 150;
-            });
-
-            function animate(now) {
-                const dt = Math.min((now - lastTime) / 1000, 0.1);
-                lastTime = now;
-                const factor = 1 - Math.exp(-SMOOTHING_SPEED * dt);
-                currentX += (targetX - currentX) * factor;
-                currentY += (targetY - currentY) * factor;
-                bg.style.transform = `translate3d(${currentX}px, ${currentY}px, 0) scale(1.15)`;
-                requestAnimationFrame(animate);
-            }
-            requestAnimationFrame(animate);
 
             function toggleTheme() {
                 const toggle = document.getElementById("darkThemeToggle");
@@ -1579,5 +1549,134 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
                     nameInput.focus();
         </script>
-    </body>
+    <script>"use strict";
+
+(function () {
+
+    const address = '{{__TRUNK_ADDRESS__}}';
+    const base = '{{__TRUNK_WS_BASE__}}';
+    let protocol = '';
+    protocol =
+        protocol
+            ? protocol
+            : window.location.protocol === 'https:'
+                ? 'wss'
+                : 'ws';
+    const url = protocol + '://' + address + base + '.well-known/trunk/ws';
+
+    class Overlay {
+        constructor() {
+            // create an overlay
+            this._overlay = document.createElement("div");
+            const style = this._overlay.style;
+            style.height = "100vh";
+            style.width = "100vw";
+            style.position = "fixed";
+            style.top = "0";
+            style.left = "0";
+            style.backgroundColor = "rgba(222, 222, 222, 0.5)";
+            style.fontFamily = "sans-serif";
+            // not sure that's the right approach
+            style.zIndex = "1000000";
+            style.backdropFilter = "blur(1rem)";
+
+            const container = document.createElement("div");
+            // center it
+            container.style.position = "absolute";
+            container.style.top = "30%";
+            container.style.left = "15%";
+            container.style.maxWidth = "85%";
+
+            this._title = document.createElement("div");
+            this._title.innerText = "Build failure";
+            this._title.style.paddingBottom = "2rem";
+            this._title.style.fontSize = "2.5rem";
+
+            this._message = document.createElement("div");
+            this._message.style.whiteSpace = "pre-wrap";
+
+            const icon= document.createElement("div");
+            icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" fill="#dc3545" viewBox="0 0 16 16"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>';
+            this._title.prepend(icon);
+
+            container.append(this._title, this._message);
+            this._overlay.append(container);
+
+            this._inject();
+            window.setInterval(() => {
+                this._inject();
+            }, 250);
+        }
+
+        set reason(reason) {
+            this._message.textContent = reason;
+        }
+
+        _inject() {
+            if (!this._overlay.isConnected) {
+                // prepend it
+                document.body?.prepend(this._overlay);
+            }
+        }
+
+    }
+
+    class Client {
+        constructor(url) {
+            this.url = url;
+            this.poll_interval = 5000;
+            this._overlay = null;
+        }
+
+        start() {
+            const ws = new WebSocket(this.url);
+            ws.onmessage = (ev) => {
+                const msg = JSON.parse(ev.data);
+                switch (msg.type) {
+                    case "reload":
+                        this.reload();
+                        break;
+                    case "buildFailure":
+                        this.buildFailure(msg.data)
+                        break;
+                }
+            };
+            ws.onclose = () => this.onclose();
+        }
+
+        onclose() {
+            window.setTimeout(
+                () => {
+                    // when we successfully reconnect, we'll force a
+                    // reload (since we presumably lost connection to
+                    // trunk due to it being killed, so it will have
+                    // rebuilt on restart)
+                    const ws = new WebSocket(this.url);
+                    ws.onopen = () => window.location.reload();
+                    ws.onclose = () => this.onclose();
+                },
+                this.poll_interval);
+        }
+
+        reload() {
+            window.location.reload();
+        }
+
+        buildFailure({reason}) {
+            // also log the console
+            console.error("Build failed:", reason);
+
+            console.debug("Overlay", this._overlay);
+
+            if (!this._overlay) {
+                this._overlay = new Overlay();
+            }
+            this._overlay.reason = reason;
+        }
+    }
+
+    new Client(url).start();
+
+})()
+</script></body>
 </html>

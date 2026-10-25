@@ -50,7 +50,7 @@ return {
                 scatterRate = 1,
                 lifeLength = 1,
                 absorbtionFactor = 1,
-                sizeRatio = 1,
+                sizeRatio = 0.699,
             },
         },
         {
@@ -70,7 +70,7 @@ return {
                 health = 1,
                 damage = 0.699,
                 speed = 1,
-                scatterRate = 1,
+                scatterRate = 3,
                 lifeLength = 1,
                 absorbtionFactor = 1,
                 sizeRatio = 1,

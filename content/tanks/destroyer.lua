@@ -54,7 +54,7 @@ return {
                 speed = 0.699,
                 scatterRate = 1,
                 lifeLength = 1,
-                absorbtionFactor = 1,
+                absorbtionFactor = 0.1,
                 sizeRatio = 1,
             },
         },

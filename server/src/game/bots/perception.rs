@@ -47,7 +47,7 @@ pub fn scan_enemies(
 ) {
     out.clear();
     for (&conn, &pe) in players.iter() {
-        if pe == exclude || !entities.is_alive(pe) {
+        if pe == exclude || !entities.is_alive(pe) || entities.tanks.allied(exclude, pe) {
             continue;
         }
 
@@ -99,7 +99,7 @@ pub fn scan_positions(
     out.clear();
 
     for (&_, &pe) in players.iter() {
-        if pe == exclude || !entities.is_alive(pe) {
+        if pe == exclude || !entities.is_alive(pe) || entities.tanks.allied(exclude, pe) {
             continue;
         }
 

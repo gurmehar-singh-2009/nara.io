@@ -6,7 +6,10 @@ use paris::info;
 
 use super::{BotBrain, DStarLite};
 use crate::{
-    entities::entity::{Entities, EntityId},
+    entities::{
+        entity::{Entities, EntityId},
+        tank::stat_max,
+    },
     fs::load_config::Config,
     scripting::scripting::Scripting,
 };
@@ -21,12 +24,15 @@ pub fn tick(
     nav_danger: &[f32],
     nav_version: u64,
     tick_count: u64,
-) {
+) -> Vec<(u32, EntityId)> {
+    let mut spawned = Vec::new();
+
     if brains.is_empty() && respawns.is_empty() {
         let num_bots = config.bots.count;
 
         for i in 0..num_bots {
-            spawn(
+            let id = config.bots.id_base + i as u32;
+            let eid = spawn(
                 scripting,
                 config,
                 players,
@@ -35,13 +41,14 @@ pub fn tick(
                 nav_danger,
                 nav_version,
                 tick_count,
-                config.bots.id_base + i as u32,
+                id,
             );
+            spawned.push((id, eid));
         }
 
         info!("spawned {num_bots} bots");
 
-        return;
+        return spawned;
     }
 
     let due: Vec<u32> = respawns
@@ -51,13 +58,13 @@ pub fn tick(
         .collect();
 
     if due.is_empty() {
-        return;
+        return spawned;
     }
 
     respawns.retain(|(_, at)| *at > tick_count);
 
     for id in due {
-        spawn(
+        let eid = spawn(
             scripting,
             config,
             players,
@@ -68,7 +75,10 @@ pub fn tick(
             tick_count,
             id,
         );
+        spawned.push((id, eid));
     }
+
+    spawned
 }
 
 fn spawn(
@@ -81,10 +91,7 @@ fn spawn(
     nav_version: u64,
     tick_count: u64,
     bot_id: u32,
-) {
-    let world_size = config.world.map_bound;
-    let x = (rnd.generate::<f32>() * world_size) - world_size / 2.0;
-    let y = (rnd.generate::<f32>() * world_size) - world_size / 2.0;
+) -> EntityId {
     let name = config.bots.names[rnd.generate::<u32>() as usize % config.bots.names.len()].clone();
 
     let bound = config.world.map_bound - 150.0;
@@ -94,7 +101,7 @@ fn spawn(
     );
 
     let entity_id = scripting.entities_mut().spawn_tank(
-        Vec2::new(x, y),
+        Vec2::ZERO,
         Vec2::ZERO,
         config.player.default_health,
         name,
@@ -143,6 +150,8 @@ fn spawn(
         bonus_points,
         config,
     );
+
+    entity_id
 }
 
 pub fn spend_stat_points(
@@ -164,16 +173,11 @@ pub fn spend_stat_points(
         attempts += 1;
         let stat = (rnd.generate::<u8>() % 8) as usize;
 
-        if t.stat_levels[stat] >= config.player.stat_max_level {
+        if t.stat_levels[stat] >= stat_max(t.tank_type, stat, config.player.stat_max_level) {
             continue;
         }
 
         t.stat_levels[stat] += 1;
-
-        if stat == 1 {
-            *t.max_health += config.player.stat_max_health_bonus;
-        }
-
         remaining -= 1;
     }
 }

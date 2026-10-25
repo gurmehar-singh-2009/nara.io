@@ -4,6 +4,17 @@ use glam::Vec2;
 
 use crate::entities::entity::EntityId;
 
+#[derive(Debug, Clone, Copy)]
+pub struct DeadBullet {
+    pub net_id: u32,
+    pub origin: Option<Vec2>,
+    pub pos: Vec2,
+    pub radius: f32,
+    pub recoil: u32,
+    pub team: u8,
+    pub trap: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Bullets {
     positions: Vec<Vec2>,
@@ -15,8 +26,13 @@ pub struct Bullets {
     recoils: Vec<u32>,
     hit_targets: Vec<Vec<EntityId>>,
     owners: Vec<EntityId>,
+    teams: Vec<u8>,
+    traps: Vec<bool>,
+    origins: Vec<Vec2>,
+    announced: Vec<bool>,
     net_ids: Vec<u32>,
     next_net_id: u32,
+    graveyard: Vec<DeadBullet>,
 }
 
 impl Bullets {
@@ -31,8 +47,13 @@ impl Bullets {
             recoils: vec![],
             hit_targets: vec![],
             owners: vec![],
+            teams: vec![],
+            traps: vec![],
+            origins: vec![],
+            announced: vec![],
             net_ids: vec![],
             next_net_id: 0x40000000,
+            graveyard: vec![],
         }
     }
 
@@ -47,6 +68,8 @@ impl Bullets {
         radius: f32,
         health: f32,
         recoil: u32,
+        team: u8,
+        trap: bool,
     ) -> u32 {
         let id = self.next_net_id;
         self.next_net_id += 1;
@@ -60,6 +83,10 @@ impl Bullets {
         self.recoils.push(recoil);
         self.hit_targets.push(Vec::new());
         self.owners.push(owner);
+        self.teams.push(team);
+        self.traps.push(trap);
+        self.origins.push(position);
+        self.announced.push(false);
         self.net_ids.push(id);
 
         id
@@ -74,6 +101,16 @@ impl Bullets {
     }
 
     pub fn remove(&mut self, i: usize) {
+        self.graveyard.push(DeadBullet {
+            net_id: self.net_ids[i],
+            origin: (!self.announced[i]).then_some(self.origins[i]),
+            pos: self.positions[i],
+            radius: self.radii[i],
+            recoil: self.recoils[i],
+            team: self.teams[i],
+            trap: self.traps[i],
+        });
+
         self.positions.swap_remove(i);
         self.velocities.swap_remove(i);
         self.lifetimes.swap_remove(i);
@@ -83,11 +120,21 @@ impl Bullets {
         self.recoils.swap_remove(i);
         self.hit_targets.swap_remove(i);
         self.owners.swap_remove(i);
+        self.teams.swap_remove(i);
+        self.traps.swap_remove(i);
+        self.origins.swap_remove(i);
+        self.announced.swap_remove(i);
         self.net_ids.swap_remove(i);
     }
 
-    pub fn tick(&mut self, dt: f32) {
+    pub fn tick(&mut self, dt: f32, trap_drag: f32) {
+        let damping = (-trap_drag * dt).exp();
+
         for i in 0..self.positions.len() {
+            if self.traps[i] {
+                self.velocities[i] *= damping;
+            }
+
             self.positions[i] += self.velocities[i] * dt;
             self.lifetimes[i] -= dt;
         }
@@ -158,6 +205,29 @@ impl Bullets {
         })
     }
 
+    pub fn fresh_origins(&self) -> Vec<Option<Vec2>> {
+        self.origins
+            .iter()
+            .zip(self.announced.iter())
+            .map(|(&origin, &announced)| (!announced).then_some(origin))
+            .collect()
+    }
+
+    pub fn mark_announced(&mut self) {
+        self.announced.fill(true);
+    }
+
+    pub fn take_graveyard(&mut self) -> Vec<DeadBullet> {
+        std::mem::take(&mut self.graveyard)
+    }
+
+    pub fn team_at(&self, i: usize) -> u8 {
+        self.teams
+            .get(i)
+            .copied()
+            .unwrap_or(shared::packets::NO_TEAM)
+    }
+
     pub fn iter_indexed(&self) -> impl Iterator<Item = (usize, &Vec2, &u32, f32, &EntityId)> {
         self.positions
             .iter()
@@ -168,12 +238,135 @@ impl Bullets {
             .map(|(i, (((pos, dmg), radius), owner))| (i, pos, dmg, *radius, owner))
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (u32, &Vec2, f32, u32)> {
+    pub fn iter(&self) -> impl Iterator<Item = (u32, &Vec2, f32, u32, u8, bool)> {
         self.positions
             .iter()
             .zip(self.net_ids.iter())
             .zip(self.radii.iter())
             .zip(self.recoils.iter())
-            .map(|(((pos, id), radius), recoil)| (*id, pos, *radius, *recoil))
+            .zip(self.teams.iter())
+            .zip(self.traps.iter())
+            .map(|(((((pos, id), radius), recoil), team), trap)| {
+                (*id, pos, *radius, *recoil, *team, *trap)
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn owner() -> EntityId {
+        EntityId {
+            index: 0,
+            generation: 0,
+        }
+    }
+
+    #[test]
+    fn dead_bullets_report_where_they_ended() {
+        let mut bullets = Bullets::new();
+
+        bullets.spawn(
+            Vec2::ZERO,
+            Vec2::X * 100.0,
+            5,
+            1.0,
+            owner(),
+            5.0,
+            10.0,
+            0,
+            0,
+            false,
+        );
+        bullets.tick(0.05, 0.0);
+        bullets.remove(0);
+
+        let dead = bullets.take_graveyard();
+        assert_eq!(dead.len(), 1);
+        assert_eq!(dead[0].origin, Some(Vec2::ZERO));
+        assert!((dead[0].pos.x - 5.0).abs() < 1e-3);
+
+        bullets.spawn(
+            Vec2::ZERO,
+            Vec2::X * 100.0,
+            5,
+            1.0,
+            owner(),
+            5.0,
+            10.0,
+            0,
+            0,
+            false,
+        );
+        bullets.mark_announced();
+        bullets.remove(0);
+
+        let dead = bullets.take_graveyard();
+        assert_eq!(dead[0].origin, None);
+        assert!(bullets.take_graveyard().is_empty());
+    }
+
+    #[test]
+    fn new_bullets_share_their_origin_once() {
+        let mut bullets = Bullets::new();
+
+        bullets.spawn(
+            Vec2::ZERO,
+            Vec2::X * 100.0,
+            5,
+            1.0,
+            owner(),
+            5.0,
+            10.0,
+            0,
+            0,
+            false,
+        );
+        bullets.tick(0.05, 0.0);
+
+        assert_eq!(bullets.fresh_origins(), vec![Some(Vec2::ZERO)]);
+
+        bullets.mark_announced();
+
+        assert_eq!(bullets.fresh_origins(), vec![None]);
+    }
+
+    #[test]
+    fn traps_slow_down_but_bullets_do_not() {
+        let mut bullets = Bullets::new();
+
+        bullets.spawn(Vec2::ZERO, Vec2::X * 100.0, 5, 10.0, owner(), 5.0, 10.0, 0, 0, false);
+        bullets.spawn(Vec2::ZERO, Vec2::X * 100.0, 5, 10.0, owner(), 5.0, 10.0, 0, 0, true);
+
+        for _ in 0..100 {
+            bullets.tick(0.01, 4.0);
+        }
+
+        assert!((bullets.position(0).x - 100.0).abs() < 1e-2);
+        assert!(bullets.position(1).x < 30.0);
+        assert!(bullets.velocity_at(1).length() < 2.0);
+    }
+
+    #[test]
+    fn expired_bullets_are_reported_too() {
+        let mut bullets = Bullets::new();
+
+        bullets.spawn(
+            Vec2::ZERO,
+            Vec2::X * 100.0,
+            5,
+            0.1,
+            owner(),
+            5.0,
+            10.0,
+            0,
+            0,
+            false,
+        );
+        bullets.tick(0.2, 0.0);
+
+        assert_eq!(bullets.len(), 0);
+        assert_eq!(bullets.take_graveyard().len(), 1);
     }
 }

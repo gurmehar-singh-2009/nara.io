@@ -2,38 +2,57 @@ use std::cell::RefCell;
 
 use glam::Vec2;
 use glyphon::{Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds, cosmic_text::Weight};
-use shared::packets::{TankOption, client_bound::BarrelDef};
-
-use crate::render::{
-    buffers::EntityInstance,
-    colours::{Color, DARK_THEME, to_glyphon},
-    scoreboard::rounded_ui_instance,
+use shared::packets::{
+    TankOption,
+    client_bound::{BarrelDef, TurretDef},
 };
 
-const TILE_W: f32 = 140.0;
-const TILE_H: f32 = 140.0;
+use crate::{
+    entities::tank::{TankDraw, tank_instances},
+    render::{
+        buffers::EntityInstance,
+        colours::{Color, DARK_THEME, to_glyphon, with_alpha},
+        scoreboard::{pill_instance, rounded_ui_instance},
+    },
+};
+
+const TILE_W: f32 = 118.0;
+const TILE_H: f32 = 118.0;
 const TILE_RADIUS: f32 = 12.0;
-const TILE_BORDER: f32 = 4.0;
-const GAP: f32 = 14.0;
+const TILE_BORDER: f32 = 3.0;
+const GAP: f32 = 10.0;
 const MIN_COLS: usize = 3;
 const MAX_COLS: usize = 5;
-const OPEN_TOP: f32 = 96.0;
+const OPEN_TOP: f32 = 84.0;
 const SLIDE_SPEED: f32 = 12.0;
+const HOVER_SPEED: f32 = 18.0;
+const HOVER_GROW: f32 = 0.06;
+const STAGGER: f32 = 0.08;
 const CLICKABLE_OPEN: f32 = 0.9;
 
-const ICON_CY: f32 = 68.0;
+const ICON_CY: f32 = 50.0;
+const STRIP_H: f32 = 30.0;
 
 const TANK_BODY_SIZE: f32 = 42.0;
-const TANK_BORDER: f32 = 3.0;
 
-const ICON_BODY_PX: f32 = 54.0;
+const ICON_BODY_PX: f32 = 40.0;
 
 const SPIN_SPEED: f32 = 1.2;
 
-const NAME_FONT: f32 = 20.0;
-const NAME_LINE: f32 = 24.0;
-const NAME_BOTTOM: f32 = 10.0;
+const NAME_FONT: f32 = 16.0;
+const NAME_LINE: f32 = 20.0;
 const TEXT_OUTLINE_PX: f32 = 1.5;
+
+const IGNORE_W: f32 = 104.0;
+const IGNORE_H: f32 = 30.0;
+const IGNORE_GAP: f32 = 12.0;
+const IGNORE_FILL: [f32; 4] = [0.2, 0.2, 0.2, 0.85];
+const IGNORE_HOVER: [f32; 4] = [0.32, 0.32, 0.32, 0.92];
+const IGNORE_BORDER: [f32; 4] = [0.08, 0.08, 0.08, 0.9];
+
+const PLAYER_CLEARANCE: f32 = 110.0;
+const MIN_FIT: f32 = 0.6;
+const ROOM_GAP: f32 = 14.0;
 
 thread_local! {
     static TANK_OPTIONS: RefCell<(u32, Vec<TankOption>)> = RefCell::new((0, Vec::new()));
@@ -64,6 +83,7 @@ pub struct TankClassDef {
     pub color: [f32; 4],
     pub sides: u32,
     pub barrels: Vec<BarrelDef>,
+    pub turrets: Vec<TurretDef>,
 }
 
 impl TankClassDef {
@@ -73,6 +93,7 @@ impl TankClassDef {
             color: tank_color(index),
             sides: option.sides,
             barrels: option.barrels.clone(),
+            turrets: option.turrets.clone(),
         }
     }
 }
@@ -113,6 +134,20 @@ fn darken(c: [f32; 4], f: f32) -> [f32; 4] {
     [c[0] * f, c[1] * f, c[2] * f, c[3]]
 }
 
+fn lighten(c: [f32; 4], t: f32) -> [f32; 4] {
+    [
+        c[0] + (1.0 - c[0]) * t,
+        c[1] + (1.0 - c[1]) * t,
+        c[2] + (1.0 - c[2]) * t,
+        c[3],
+    ]
+}
+
+fn ease_out_back(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0) - 1.0;
+    1.0 + t * t * (2.7 * t + 1.7)
+}
+
 fn window_to_screen_scale(window: Vec2, screen: Vec2) -> f32 {
     if window.x > 0.0 {
         screen.x / window.x
@@ -121,7 +156,12 @@ fn window_to_screen_scale(window: Vec2, screen: Vec2) -> f32 {
     }
 }
 
-fn screen_to_world(center: Vec2, screen: Vec2, camera_pos: [f32; 2], zoom: f32) -> ([f32; 2], f32) {
+pub(crate) fn screen_to_world(
+    center: Vec2,
+    screen: Vec2,
+    camera_pos: [f32; 2],
+    zoom: f32,
+) -> ([f32; 2], f32) {
     let aspect = if screen.y > 0.0 {
         screen.x / screen.y
     } else {
@@ -141,50 +181,39 @@ fn screen_to_world(center: Vec2, screen: Vec2, camera_pos: [f32; 2], zoom: f32) 
     (position, px_per_world)
 }
 
-fn push_tank_icon(
+pub(crate) fn push_tank_icon(
     instances: &mut Vec<EntityInstance>,
     def: &TankClassDef,
     world_pos: [f32; 2],
     spin: f32,
     scale: f32,
+    alpha: f32,
 ) {
-    for barrel in def.barrels.iter() {
-        let barrel_angle = barrel.angle.to_radians();
-        let world_angle = spin + barrel_angle;
+    let aims: Vec<f32> = def
+        .turrets
+        .iter()
+        .map(|t| spin + t.angle.to_radians())
+        .collect();
 
-        let base_local = Vec2::new(barrel.x, barrel.y) * scale;
-        let base_pos =
-            Vec2::new(world_pos[0], world_pos[1]) + Vec2::from_angle(spin).rotate(base_local);
-        let center_offset = Vec2::from_angle(world_angle) * (barrel.length * scale * 0.5);
-        let barrel_pos = base_pos + center_offset;
-
-        instances.push(EntityInstance {
-            position: [barrel_pos.x, barrel_pos.y],
-            size: [barrel.length * scale, barrel.width * scale],
-            rotation: world_angle,
-            shape_type: 1,
-            sides: 4,
-            fill_color: DARK_THEME.barrel,
-            border_color: DARK_THEME.barrel_outline,
-            border_thickness: TANK_BORDER * scale,
-            extra_param: 1.0,
-        });
-    }
-
-    let size = TANK_BODY_SIZE * scale;
-    let shape_type = if def.sides >= 3 { 3 } else { 0 };
-
-    instances.push(EntityInstance {
-        position: world_pos,
-        size: [size, size],
-        rotation: spin,
-        shape_type,
+    let (parts, _) = tank_instances(&TankDraw {
+        pos: Vec2::new(world_pos[0], world_pos[1]),
+        rot: spin,
+        scale,
+        barrels: &def.barrels,
+        recoils: &[],
+        turrets: &def.turrets,
+        turret_aims: &aims,
         sides: def.sides,
-        fill_color: def.color,
-        border_color: darken(def.color, 0.35),
-        border_thickness: TANK_BORDER * scale,
-        extra_param: 1.0,
+        body: def.color,
+        alpha,
     });
+
+    instances.extend(parts);
+}
+
+pub(crate) fn icon_scale(px: f32, screen: Vec2, zoom: f32) -> f32 {
+    let px_per_world = (zoom * screen.y * 0.5).max(1e-4);
+    px / (TANK_BODY_SIZE * px_per_world)
 }
 
 pub struct TankUpgradePanel {
@@ -196,6 +225,13 @@ pub struct TankUpgradePanel {
     /// icon rotation (radians); advances in tick so the tanks spin
     spin: f32,
     defs_gen: u32,
+    hovers: Vec<f32>,
+    hovered: Option<usize>,
+    ignore_hovered: bool,
+    dismissed: bool,
+    ignore_label: Buffer,
+    top: f32,
+    top_target: f32,
 }
 
 impl TankUpgradePanel {
@@ -207,6 +243,13 @@ impl TankUpgradePanel {
             pinned: false,
             spin: 0.0,
             defs_gen: 0,
+            hovers: Vec::new(),
+            hovered: None,
+            ignore_hovered: false,
+            dismissed: false,
+            ignore_label: make_buffer(fs, "Ignore"),
+            top: OPEN_TOP,
+            top_target: OPEN_TOP,
         };
 
         panel.set_defs(fs, defs);
@@ -227,7 +270,43 @@ impl TankUpgradePanel {
 
     fn set_defs(&mut self, fs: &mut glyphon::FontSystem, defs: Vec<TankClassDef>) {
         self.labels = defs.iter().map(|d| make_buffer(fs, &d.name)).collect();
+        self.hovers = vec![0.0; defs.len()];
         self.defs = defs;
+        self.dismissed = false;
+    }
+
+    pub fn dismiss(&mut self) {
+        self.dismissed = true;
+        self.pinned = false;
+    }
+
+    pub fn make_room(&mut self, above: f32) {
+        self.top_target = OPEN_TOP.max(above + ROOM_GAP);
+    }
+
+    fn fit(&self, screen: Vec2) -> f32 {
+        let room = screen.y * 0.5 - PLAYER_CLEARANCE - OPEN_TOP - IGNORE_GAP - IGNORE_H;
+        (room / self.total_h(1.0)).clamp(MIN_FIT, 1.0)
+    }
+
+    fn ignore_rect(&self, screen: Vec2) -> (Vec2, Vec2) {
+        let s = self.fit(screen);
+        let top = self.grid_top(s) + self.total_h(s) + IGNORE_GAP;
+        let left = (screen.x - IGNORE_W) * 0.5;
+        (
+            Vec2::new(left, top),
+            Vec2::new(left + IGNORE_W, top + IGNORE_H),
+        )
+    }
+
+    pub fn hit_ignore(&self, cursor: Vec2, window: Vec2, screen: Vec2) -> bool {
+        if self.open < CLICKABLE_OPEN {
+            return false;
+        }
+
+        let c = cursor * window_to_screen_scale(window, screen);
+        let (min, max) = self.ignore_rect(screen);
+        c.x >= min.x && c.x <= max.x && c.y >= min.y && c.y <= max.y
     }
 
     pub fn toggle(&mut self) {
@@ -255,37 +334,47 @@ impl TankUpgradePanel {
         (self.defs.len() + cols - 1) / cols
     }
 
-    fn total_w(&self) -> f32 {
+    fn total_w(&self, s: f32) -> f32 {
         let cols = self.cols() as f32;
-        cols * TILE_W + (cols - 1.0) * GAP
+        (cols * TILE_W + (cols - 1.0) * GAP) * s
     }
 
-    fn total_h(&self) -> f32 {
+    fn total_h(&self, s: f32) -> f32 {
         let rows = self.rows().max(1);
-        rows as f32 * TILE_H + (rows as f32 - 1.0) * GAP
+        (rows as f32 * TILE_H + (rows as f32 - 1.0) * GAP) * s
     }
 
-    fn grid_top(&self) -> f32 {
-        let closed = -(self.total_h() + 40.0);
-        closed + (OPEN_TOP - closed) * self.open
+    fn grid_top(&self, s: f32) -> f32 {
+        let closed = -(self.total_h(s) + 40.0);
+        closed + (self.top - closed) * self.open
     }
 
     fn tile_rects(&self, screen: Vec2) -> Vec<(Vec2, Vec2)> {
-        let left = (screen.x - self.total_w()) * 0.5;
-        let top = self.grid_top();
+        let s = self.fit(screen);
+        let (tile_w, tile_h, gap) = (TILE_W * s, TILE_H * s, GAP * s);
+        let left = (screen.x - self.total_w(s)) * 0.5;
+        let top = self.grid_top(s);
         self.defs
             .iter()
             .enumerate()
             .map(|(i, _)| {
                 let col = (i % self.cols()) as f32;
                 let row = (i / self.cols()) as f32;
-                let min = Vec2::new(left + col * (TILE_W + GAP), top + row * (TILE_H + GAP));
-                (min, min + Vec2::new(TILE_W, TILE_H))
+                let min = Vec2::new(left + col * (tile_w + gap), top + row * (tile_h + gap));
+                (min, min + Vec2::new(tile_w, tile_h))
             })
             .collect()
     }
 
-    pub fn tick(&mut self, fs: &mut glyphon::FontSystem, dt: f32, available: bool) {
+    pub fn tick(
+        &mut self,
+        fs: &mut glyphon::FontSystem,
+        dt: f32,
+        available: bool,
+        cursor: Option<Vec2>,
+        window: Vec2,
+        screen: Vec2,
+    ) {
         let (genr, options) = options_snapshot();
         if genr != self.defs_gen {
             self.defs_gen = genr;
@@ -297,15 +386,29 @@ impl TankUpgradePanel {
             self.set_defs(fs, defs);
         }
 
-        let target = if self.pinned || available { 1.0 } else { 0.0 };
+        let target = if self.pinned || (available && !self.dismissed) {
+            1.0
+        } else {
+            0.0
+        };
         let t = 1.0 - (-SLIDE_SPEED * dt).exp();
         self.open += (target - self.open) * t;
         if (self.open - target).abs() < 0.002 {
             self.open = target;
         }
+        self.top += (self.top_target - self.top) * t;
 
         // SPIN YAY
         self.spin += dt * SPIN_SPEED;
+
+        self.hovered = cursor.and_then(|c| self.hit_test(c, window, screen));
+        self.ignore_hovered = cursor.is_some_and(|c| self.hit_ignore(c, window, screen));
+
+        let t = 1.0 - (-HOVER_SPEED * dt).exp();
+        for (i, h) in self.hovers.iter_mut().enumerate() {
+            let target = if self.hovered == Some(i) { 1.0 } else { 0.0 };
+            *h += (target - *h) * t;
+        }
     }
 
     pub fn hit_test(&self, cursor: Vec2, window: Vec2, screen: Vec2) -> Option<usize> {
@@ -335,37 +438,103 @@ impl TankUpgradePanel {
             return (instances, areas);
         }
 
-        let px_per_world = (zoom * screen.y * 0.5).max(1e-4);
-        let scale = ICON_BODY_PX / (TANK_BODY_SIZE * px_per_world);
-
         let rects = self.tile_rects(screen);
+        let s = self.fit(screen);
 
         for (i, def) in self.defs.iter().enumerate() {
             let (min, _) = rects[i];
-            let tile_cx = min.x + TILE_W * 0.5;
-            let tile_cy = min.y + TILE_H * 0.5;
-            let icon_c = Vec2::new(tile_cx, min.y + ICON_CY);
+            let appear = ease_out_back((self.open - i as f32 * STAGGER) / (1.0 - STAGGER * 4.0));
+            let alpha = appear.clamp(0.0, 1.0);
+            if alpha <= 0.01 {
+                continue;
+            }
+
+            let hover = self.hovers.get(i).copied().unwrap_or(0.0);
+            let grow = 1.0 + hover * HOVER_GROW;
+            let drop = (1.0 - appear) * -40.0;
+
+            let center = Vec2::new(min.x + TILE_W * s * 0.5, min.y + TILE_H * s * 0.5 + drop);
+            let size = Vec2::new(TILE_W, TILE_H) * s * grow;
+            let fill = lighten(def.color, hover * 0.15);
 
             instances.push(rounded_ui_instance(
-                Vec2::new(tile_cx, tile_cy),
-                Vec2::new(TILE_W, TILE_H),
+                center,
+                size,
                 screen,
-                def.color,
-                darken(def.color, 0.55),
+                with_alpha(fill, alpha),
+                with_alpha(darken(def.color, 0.55), alpha),
                 TILE_BORDER,
-                TILE_RADIUS,
+                TILE_RADIUS * s * grow,
             ));
 
-            let (world_pos, _) = screen_to_world(icon_c, screen, camera_pos, zoom);
-            push_tank_icon(&mut instances, def, world_pos, self.spin, scale);
+            let strip_h = STRIP_H * s * grow;
+            let strip_center = Vec2::new(
+                center.x,
+                center.y + size.y * 0.5 - TILE_BORDER - strip_h * 0.5,
+            );
 
-            let name_w = measure(&self.labels[i]);
+            instances.push(rounded_ui_instance(
+                strip_center,
+                Vec2::new(size.x - TILE_BORDER * 2.0, strip_h),
+                screen,
+                with_alpha(darken(def.color, 0.78), alpha),
+                with_alpha(darken(def.color, 0.78), 0.0),
+                0.0,
+                (TILE_RADIUS * s - TILE_BORDER).max(2.0) * grow,
+            ));
+
+            let icon_c = Vec2::new(center.x, center.y - size.y * 0.5 + ICON_CY * s * grow);
+            let (world_pos, _) = screen_to_world(icon_c, screen, camera_pos, zoom);
+            push_tank_icon(
+                &mut instances,
+                def,
+                world_pos,
+                self.spin,
+                icon_scale(ICON_BODY_PX * s * grow, screen, zoom),
+                alpha,
+            );
+
+            let text_s = s.max(0.8);
+            let name_w = measure(&self.labels[i]) * text_s;
             push_outlined(
                 &mut areas,
                 &self.labels[i],
-                tile_cx - name_w * 0.5,
-                min.y + TILE_H - NAME_LINE - NAME_BOTTOM,
+                center.x - name_w * 0.5,
+                strip_center.y - NAME_LINE * text_s * 0.5,
+                text_s,
                 screen,
+                alpha,
+            );
+        }
+
+        if !self.defs.is_empty() {
+            let (min, max) = self.ignore_rect(screen);
+            let center = (min + max) * 0.5;
+            let fill = if self.ignore_hovered {
+                IGNORE_HOVER
+            } else {
+                IGNORE_FILL
+            };
+            let alpha = ((self.open - 0.5) * 2.0).clamp(0.0, 1.0);
+
+            instances.push(pill_instance(
+                center,
+                Vec2::new(IGNORE_W, IGNORE_H),
+                screen,
+                with_alpha(fill, alpha),
+                with_alpha(IGNORE_BORDER, alpha),
+                2.0,
+            ));
+
+            let w = measure(&self.ignore_label);
+            push_outlined(
+                &mut areas,
+                &self.ignore_label,
+                center.x - w * 0.5,
+                center.y - NAME_LINE * 0.5,
+                1.0,
+                screen,
+                alpha,
             );
         }
 
@@ -378,7 +547,9 @@ fn push_outlined<'a>(
     buffer: &'a Buffer,
     left: f32,
     top: f32,
+    scale: f32,
     screen: Vec2,
+    alpha: f32,
 ) {
     let bounds = TextBounds {
         left: 0,
@@ -386,8 +557,8 @@ fn push_outlined<'a>(
         right: screen.x as i32,
         bottom: screen.y as i32,
     };
-    let outline_color = to_glyphon(DARK_THEME.fill_border);
-    let fill_color = to_glyphon([1.0, 1.0, 1.0, 1.0]);
+    let outline_color = to_glyphon(with_alpha(DARK_THEME.fill_border, alpha));
+    let fill_color = to_glyphon([1.0, 1.0, 1.0, alpha]);
 
     const DIRS: [(f32, f32); 8] = [
         (1.0, 0.0),
@@ -404,7 +575,7 @@ fn push_outlined<'a>(
             buffer,
             left: left + dx * TEXT_OUTLINE_PX,
             top: top + dy * TEXT_OUTLINE_PX,
-            scale: 1.0,
+            scale,
             bounds,
             default_color: outline_color,
             custom_glyphs: &[],
@@ -415,7 +586,7 @@ fn push_outlined<'a>(
         buffer,
         left,
         top,
-        scale: 1.0,
+        scale,
         bounds,
         default_color: fill_color,
         custom_glyphs: &[],

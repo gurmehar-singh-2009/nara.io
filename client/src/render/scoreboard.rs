@@ -5,20 +5,22 @@ use glyphon::{Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds, cos
 
 use crate::render::{
     buffers::EntityInstance,
-    colours::{DARK_THEME, to_glyphon},
+    colours::{DARK_THEME, PLAYER_BLUE, to_glyphon},
 };
 
 const RIGHT_MARGIN: f32 = 16.0;
 const TOP_MARGIN: f32 = 24.0;
 const ROW_WIDTH: f32 = 350.0;
-const ROW_HEIGHT: f32 = 32.0;
-const ROW_GAP: f32 = 6.0;
-const ROW_FONT_SIZE: f32 = 24.0;
-const ROW_LINE_HEIGHT: f32 = 28.0;
+const ROW_HEIGHT: f32 = 30.0;
+const ROW_GAP: f32 = 5.0;
+const ROW_FONT_SIZE: f32 = 20.0;
+const ROW_LINE_HEIGHT: f32 = 24.0;
 const TITLE_LINE_HEIGHT: f32 = 32.0;
 const TITLE_TO_ROWS: f32 = 8.0;
-const ICON_SIZE: f32 = 15.0;
-const ICON_INSET: f32 = 3.0;
+const ROW_BORDER: f32 = 3.0;
+const ROW_TRACK: [f32; 4] = [0.33, 0.33, 0.33, 0.85];
+const ROW_OUTLINE: [f32; 4] = [0.2, 0.2, 0.2, 0.95];
+const ROW_OUTLINE_MINE: [f32; 4] = [0.95, 0.95, 0.95, 0.95];
 const MAX_ROWS: usize = 10;
 
 const ANIM_SPEED: f32 = 10.0;
@@ -106,6 +108,17 @@ pub(crate) fn bar_ui_instance(
         DARK_THEME.scoreboard_row,
         4.0,
     )
+}
+
+pub(crate) fn pill_instance(
+    center: Vec2,
+    size_px: Vec2,
+    screen: Vec2,
+    fill: [f32; 4],
+    border: [f32; 4],
+    border_px: f32,
+) -> EntityInstance {
+    ui_instance(center, size_px, screen, 5, fill, border, border_px)
 }
 
 pub(crate) fn rounded_ui_instance(
@@ -236,7 +249,11 @@ impl Scoreboard {
         }
     }
 
-    pub fn render_data(&self, screen: Vec2) -> (Vec<EntityInstance>, Vec<TextArea<'_>>) {
+    pub fn render_data(
+        &self,
+        screen: Vec2,
+        me: Option<&str>,
+    ) -> (Vec<EntityInstance>, Vec<TextArea<'_>>) {
         let mut instances = Vec::new();
         let mut areas = Vec::new();
         let theme = &DARK_THEME;
@@ -261,31 +278,32 @@ impl Scoreboard {
         for row in self.rows.iter() {
             let center_y = y + ROW_HEIGHT * 0.5;
 
-            instances.push(bar_ui_instance(
+            let mine = me.is_some_and(|me| me == row.name);
+            let fill = if mine {
+                PLAYER_BLUE
+            } else {
+                theme.health_bar_foreground
+            };
+
+            instances.push(pill_instance(
                 Vec2::new(center_x, center_y),
                 Vec2::new(ROW_WIDTH, ROW_HEIGHT),
                 screen,
-                theme.scoreboard_row,
+                ROW_TRACK,
+                if mine { ROW_OUTLINE_MINE } else { ROW_OUTLINE },
+                ROW_BORDER,
             ));
 
-            let fill_width = (ROW_WIDTH * row.display_ratio).max(ROW_HEIGHT);
-            instances.push(bar_ui_instance(
-                Vec2::new(left + fill_width * 0.5, center_y),
-                Vec2::new(fill_width, ROW_HEIGHT),
+            let inner_h = ROW_HEIGHT - ROW_BORDER * 2.0;
+            let inner_w = ROW_WIDTH - ROW_BORDER * 2.0;
+            let fill_width = (inner_w * row.display_ratio).max(inner_h);
+            instances.push(pill_instance(
+                Vec2::new(left + ROW_BORDER + fill_width * 0.5, center_y),
+                Vec2::new(fill_width, inner_h),
                 screen,
-                theme.health_bar_foreground,
-            ));
-
-            let icon_x = (left + fill_width - ICON_SIZE * 0.5 - ICON_INSET)
-                .max(left + ICON_SIZE * 0.5 + ICON_INSET);
-            instances.push(ui_instance(
-                Vec2::new(icon_x, center_y),
-                Vec2::new(ICON_SIZE, ICON_SIZE),
-                screen,
-                6,
-                theme.team_blue,
-                DARK_THEME.scoreboard_row,
-                4.0,
+                fill,
+                fill,
+                0.0,
             ));
 
             let text_left = center_x - measure(&row.buffer) * 0.5;

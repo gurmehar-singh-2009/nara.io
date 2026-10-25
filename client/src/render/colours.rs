@@ -1,3 +1,5 @@
+use shared::packets::NO_TEAM;
+
 pub type Color = [f32; 4];
 
 #[inline]
@@ -230,6 +232,28 @@ impl DiepTheme {
         } else {
             DiepTheme::dark()
         }
+    }
+}
+
+pub const PLAYER_BLUE: Color = [0.22, 0.55, 0.98, 1.0];
+
+pub fn team_color(team: u8) -> Color {
+    match team {
+        0 => PLAYER_BLUE,
+        1 => TEAM_RED,
+        2 => TEAM_GREEN,
+        3 => TEAM_PURPLE,
+        _ => FALLEN,
+    }
+}
+
+pub fn entity_color(team: u8, is_mine: bool) -> Color {
+    if team != NO_TEAM {
+        team_color(team)
+    } else if is_mine {
+        PLAYER_BLUE
+    } else {
+        TEAM_RED
     }
 }
 

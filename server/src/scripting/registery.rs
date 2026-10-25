@@ -34,7 +34,7 @@ pub fn register_commands(lua: &Lua) -> mlua::Result<Arc<Mutex<HashMap<String, Fu
     let register_fn = lua.create_function(move |_, (name, func): (String, Function)| {
         reg.lock()
             .map_err(|e| mlua::Error::external(e.to_string()))?
-            .insert(name, func);
+            .insert(name.to_lowercase(), func);
         // reg.borrow_mut().insert(name, func);
         Ok(())
     })?;

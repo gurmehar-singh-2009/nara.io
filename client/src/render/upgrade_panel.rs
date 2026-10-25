@@ -1,88 +1,76 @@
 // this is the stats upgrade panel
 // press u to quick toggle to test it out
-//
-// row layout:
-//   - solid stat-coloured bar (dark border + track)
-//   - name top-left, level pill top-right
-//   - MAX_LEVEL level slots along the bottom strip
-//   - "+" button: colour ring + dark face, fills on hover, goes dark grey when
-//     nothing can be spent on it
-// "x N" unspent points sit in a pill at the top right.
-//
-// juice: hovering a row brightens its track; call flash(idx)
-// right after spending a point for a white pop on the new slot.
 
 use glam::Vec2;
 use glyphon::{Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds, cosmic_text::Weight};
 
 use crate::render::{
     buffers::EntityInstance,
-    colours::{DARK_THEME, to_glyphon},
-    scoreboard::bar_ui_instance,
+    colours::{DARK_THEME, to_glyphon, with_alpha},
+    scoreboard::pill_instance,
 };
 
-const BAR_W: f32 = 300.0;
-const PLUS_W: f32 = 44.0;
-const PLUS_GAP: f32 = 6.0;
-const ROW_W: f32 = BAR_W + PLUS_GAP + PLUS_W;
-const BUTTON_H: f32 = 46.0;
-const BUTTON_GAP: f32 = 8.0;
+const NUM_UPGRADES: usize = 8;
+
+const BAR_W: f32 = 270.0;
+const BAR_H: f32 = 30.0;
+const ROW_GAP: f32 = 6.0;
+const PLUS_D: f32 = 30.0;
+const PLUS_GAP: f32 = 8.0;
+const ROW_W: f32 = BAR_W + PLUS_GAP + PLUS_D;
 const PANEL_MARGIN: f32 = 16.0;
+const BOTTOM_MARGIN: f32 = 24.0;
+
+const OUTLINE: f32 = 4.0;
+const SEG_GAP: f32 = 2.0;
 
 const OPEN_X: f32 = PANEL_MARGIN;
 const CLOSED_X: f32 = -(ROW_W + 40.0);
-
 const SLIDE_SPEED: f32 = 12.0;
+const ROW_SPEED: f32 = 14.0;
 
 const TRIGGER_W: f32 = 0.22;
-const TRIGGER_H: f32 = 0.25;
-
+const TRIGGER_H: f32 = 0.35;
 const CLICKABLE_OPEN: f32 = 0.9;
 const HOVER_OPEN: f32 = 0.5;
 
-const COUNTER_H: f32 = 26.0;
-const COUNTER_GAP: f32 = 6.0;
-const COUNTER_FONT: f32 = 18.0;
-const COUNTER_LINE: f32 = 22.0;
-const COUNTER_PAD: f32 = 10.0;
-
-// text
-const LABEL_PAD: f32 = 14.0;
-const LABEL_FONT: f32 = 18.0;
-const LABEL_LINE: f32 = 22.0;
-
-const NUM_FONT: f32 = 15.0;
-const NUM_LINE: f32 = 18.0;
-const NUM_PAD: f32 = 14.0;
-const PILL: f32 = 26.0;
-
-const PLUS_FONT: f32 = 26.0;
-const PLUS_LINE: f32 = 30.0;
-
-// bar internal layout
-const INSET: f32 = 3.0;
-const TOP_ZONE: f32 = 28.0;
-const STRIP_H: f32 = 8.0;
-const STRIP_PAD: f32 = 14.0;
-const SEG_GAP: f32 = 3.0;
-
-// shading (brightness factors of the stat colour)
-const BORDER_F: f32 = 0.24;
-const TRACK_F: f32 = 0.40;
-const TRACK_HOVER_F: f32 = 0.52;
-const SEG_EMPTY_F: f32 = 0.62;
-const PILL_F: f32 = 0.30;
-const PLUS_INNER_F: f32 = 0.45;
-
-const MAX_LEVEL: u8 = 7;
-
-const LOCKED: [f32; 4] = [0.42, 0.44, 0.48, 1.0];
-
-const FLASH_DECAY: f32 = 4.0;
+const LABEL_FONT: f32 = 16.0;
+const LABEL_LINE: f32 = 19.0;
+const KEY_FONT: f32 = 12.0;
+const KEY_LINE: f32 = 14.0;
+const PLUS_FONT: f32 = 22.0;
+const PLUS_LINE: f32 = 26.0;
+const COUNTER_FONT: f32 = 20.0;
+const COUNTER_LINE: f32 = 24.0;
+const COUNTER_GAP: f32 = 8.0;
 
 const TEXT_OUTLINE_PX: f32 = 1.5;
+const FLASH_DECAY: f32 = 4.0;
+const ROW_STAGGER: f32 = 0.06;
+const PULSE_SPEED: f32 = 5.0;
+const PULSE_GROW: f32 = 0.08;
+const BADGE_PAD: f32 = 10.0;
+const BADGE_H: f32 = 28.0;
+const BADGE_POP: f32 = 0.35;
+const BADGE_DECAY: f32 = 3.0;
+const OUTLINE_PX: f32 = 3.0;
 
-const NUM_UPGRADES: usize = 8;
+const TRACK: [f32; 4] = [0.27, 0.27, 0.27, 0.92];
+const BAR_OUTLINE: [f32; 4] = [0.12, 0.12, 0.12, 0.95];
+const BADGE_FILL: [f32; 4] = [0.16, 0.16, 0.16, 0.92];
+const LOCKED: [f32; 4] = [0.55, 0.55, 0.55, 1.0];
+const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+
+const STAT_COLORS: [[f32; 4]; NUM_UPGRADES] = [
+    [0.933, 0.714, 0.565, 1.0],
+    [0.925, 0.424, 0.941, 1.0],
+    [0.604, 0.424, 0.941, 1.0],
+    [0.424, 0.588, 0.941, 1.0],
+    [0.941, 0.851, 0.424, 1.0],
+    [0.941, 0.424, 0.424, 1.0],
+    [0.596, 0.941, 0.424, 1.0],
+    [0.424, 0.941, 0.925, 1.0],
+];
 
 fn bold() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif).weight(Weight::BOLD)
@@ -95,17 +83,13 @@ fn make_buffer(fs: &mut glyphon::FontSystem, metrics: Metrics, text: &str) -> Bu
     buffer
 }
 
-fn measure(buffer: &Buffer) -> f32 {
-    buffer.layout_runs().next().map(|r| r.line_w).unwrap_or(0.0)
+fn reshape(fs: &mut glyphon::FontSystem, buffer: &mut Buffer, text: &str) {
+    buffer.set_text(text, &bold(), Shaping::Basic, None);
+    buffer.shape_until_scroll(fs, false);
 }
 
-fn darken(color: [f32; 4], factor: f32) -> [f32; 4] {
-    [
-        color[0] * factor,
-        color[1] * factor,
-        color[2] * factor,
-        color[3],
-    ]
+fn measure(buffer: &Buffer) -> f32 {
+    buffer.layout_runs().next().map(|r| r.line_w).unwrap_or(0.0)
 }
 
 fn lighten(color: [f32; 4], t: f32) -> [f32; 4] {
@@ -117,17 +101,12 @@ fn lighten(color: [f32; 4], t: f32) -> [f32; 4] {
     ]
 }
 
-fn upgrade_defs() -> [(&'static str, [f32; 4]); NUM_UPGRADES] {
-    let t = &DARK_THEME;
+fn darken(color: [f32; 4], factor: f32) -> [f32; 4] {
     [
-        ("Health Regen", t.health_bar_foreground),
-        ("Max Health", t.team_purple),
-        ("Body Damage", t.team_red),
-        ("Bullet Speed", t.team_blue),
-        ("Bullet Penetration", t.pentagon),
-        ("Bullet Damage", t.xp_bar_fill),
-        ("Reload", t.barrel),
-        ("Movement Speed", t.score_bar_fill),
+        color[0] * factor,
+        color[1] * factor,
+        color[2] * factor,
+        color[3],
     ]
 }
 
@@ -141,40 +120,45 @@ fn window_to_screen_scale(window: Vec2, screen: Vec2) -> f32 {
 
 pub struct UpgradePanel {
     labels: Vec<Buffer>,
-    numbers: Vec<Buffer>,
+    label_text: Vec<String>,
+    keys: Vec<Buffer>,
     plus: Buffer,
-    x_mark: Buffer,
-    digits: Vec<Buffer>,
+    counter: Buffer,
+    counter_points: u32,
+    maxes: [u8; NUM_UPGRADES],
     open: f32,
     pinned: bool,
     hover: Option<usize>,
     flashes: [f32; NUM_UPGRADES],
+    rows: [f32; NUM_UPGRADES],
+    time: f32,
+    badge_pop: f32,
 }
 
 impl UpgradePanel {
     pub fn new(fs: &mut glyphon::FontSystem) -> Self {
-        let labels = upgrade_defs()
-            .iter()
-            .map(|(name, _)| make_buffer(fs, Metrics::new(LABEL_FONT, LABEL_LINE), name))
+        let labels = (0..NUM_UPGRADES)
+            .map(|_| make_buffer(fs, Metrics::new(LABEL_FONT, LABEL_LINE), ""))
             .collect();
-        let numbers = (0..=MAX_LEVEL)
-            .map(|n| make_buffer(fs, Metrics::new(NUM_FONT, NUM_LINE), &n.to_string()))
+        let keys = (1..=NUM_UPGRADES)
+            .map(|n| make_buffer(fs, Metrics::new(KEY_FONT, KEY_LINE), &format!("[{n}]")))
             .collect();
-        let plus = make_buffer(fs, Metrics::new(PLUS_FONT, PLUS_LINE), "+");
-        let x_mark = make_buffer(fs, Metrics::new(COUNTER_FONT, COUNTER_LINE), "x");
-        let digits = (0..10)
-            .map(|d| make_buffer(fs, Metrics::new(COUNTER_FONT, COUNTER_LINE), &d.to_string()))
-            .collect();
+
         Self {
             labels,
-            numbers,
-            plus,
-            x_mark,
-            digits,
+            label_text: vec![String::new(); NUM_UPGRADES],
+            keys,
+            plus: make_buffer(fs, Metrics::new(PLUS_FONT, PLUS_LINE), "+"),
+            counter: make_buffer(fs, Metrics::new(COUNTER_FONT, COUNTER_LINE), "x0"),
+            counter_points: 0,
+            maxes: [7; NUM_UPGRADES],
             open: 0.0,
             pinned: false,
             hover: None,
             flashes: [0.0; NUM_UPGRADES],
+            rows: [1.0; NUM_UPGRADES],
+            time: 0.0,
+            badge_pop: 0.0,
         }
     }
 
@@ -192,52 +176,96 @@ impl UpgradePanel {
         }
     }
 
-    fn header_h() -> f32 {
-        COUNTER_H + COUNTER_GAP
+    pub fn sync(
+        &mut self,
+        fs: &mut glyphon::FontSystem,
+        names: &[String],
+        maxes: &[u8; NUM_UPGRADES],
+        points: u32,
+    ) {
+        for i in 0..NUM_UPGRADES {
+            let name = names.get(i).map(String::as_str).unwrap_or("");
+            if self.label_text[i] != name {
+                reshape(fs, &mut self.labels[i], name);
+                self.label_text[i] = name.to_string();
+            }
+        }
+
+        self.maxes = *maxes;
+
+        if self.counter_points != points {
+            reshape(fs, &mut self.counter, &format!("x{points}"));
+            self.counter_points = points;
+            self.badge_pop = 1.0;
+        }
     }
 
-    fn rows_h() -> f32 {
-        (NUM_UPGRADES as f32) * BUTTON_H + ((NUM_UPGRADES - 1) as f32) * BUTTON_GAP
-    }
-
-    fn total_h() -> f32 {
-        Self::header_h() + Self::rows_h()
+    fn visible_rows(&self) -> f32 {
+        self.rows.iter().sum()
     }
 
     fn panel_x(&self) -> f32 {
         OPEN_X + (CLOSED_X - OPEN_X) * (1.0 - self.open)
     }
 
+    fn row_x(&self, i: usize) -> f32 {
+        let span = 1.0 - ROW_STAGGER * (NUM_UPGRADES - 1) as f32;
+        let t = ((self.open - i as f32 * ROW_STAGGER) / span).clamp(0.0, 1.0);
+        let eased = 1.0 - (1.0 - t).powi(3);
+
+        OPEN_X + (CLOSED_X - OPEN_X) * (1.0 - eased)
+    }
+
+    fn rows_h(&self) -> f32 {
+        self.visible_rows() * (BAR_H + ROW_GAP)
+    }
+
     fn panel_rect(&self, screen: Vec2) -> (Vec2, Vec2) {
         let x = self.panel_x();
-        let bottom = screen.y - PANEL_MARGIN;
-        let top = bottom - Self::total_h();
+        let bottom = screen.y - BOTTOM_MARGIN;
+        let top = bottom - self.rows_h() - COUNTER_LINE - COUNTER_GAP;
         (Vec2::new(x, top), Vec2::new(x + ROW_W, bottom))
     }
 
-    pub fn tick(&mut self, dt: f32, cursor: Option<Vec2>, window: Vec2, screen: Vec2) {
+    fn row_tops(&self, screen: Vec2) -> [f32; NUM_UPGRADES] {
+        let bottom = screen.y - BOTTOM_MARGIN;
+        let mut y = bottom - self.rows_h();
+        let mut tops = [0.0; NUM_UPGRADES];
+
+        for i in 0..NUM_UPGRADES {
+            tops[i] = y;
+            y += self.rows[i] * (BAR_H + ROW_GAP);
+        }
+
+        tops
+    }
+
+    pub fn tick(&mut self, dt: f32, cursor: Option<Vec2>, window: Vec2, screen: Vec2, points: u32) {
         let scale = window_to_screen_scale(window, screen);
         let c = cursor.map(|c| c * scale);
 
-        let target = if self.pinned {
+        for i in 0..NUM_UPGRADES {
+            let target = if self.maxes[i] > 0 { 1.0 } else { 0.0 };
+            self.rows[i] += (target - self.rows[i]) * (1.0 - (-ROW_SPEED * dt).exp());
+        }
+
+        let in_trigger = c.is_some_and(|c| {
+            c.x >= 0.0
+                && c.x < screen.x * TRIGGER_W
+                && c.y > screen.y * (1.0 - TRIGGER_H)
+                && c.y <= screen.y
+        });
+        let (min, max) = self.panel_rect(screen);
+        let hovering =
+            c.is_some_and(|c| c.x >= min.x && c.x <= max.x && c.y >= min.y && c.y <= max.y);
+
+        let target = if self.pinned || points > 0 || in_trigger || hovering {
             1.0
         } else {
-            let in_trigger = c.map_or(false, |c| {
-                c.x >= 0.0
-                    && c.x < screen.x * TRIGGER_W
-                    && c.y > screen.y * (1.0 - TRIGGER_H)
-                    && c.y <= screen.y
-            });
-            let (min, max) = self.panel_rect(screen);
-            let hovering = c.map_or(false, |c| {
-                c.x >= min.x && c.x <= max.x && c.y >= min.y && c.y <= max.y
-            });
-
-            if in_trigger || hovering { 1.0 } else { 0.0 }
+            0.0
         };
 
-        let t = 1.0 - (-SLIDE_SPEED * dt).exp();
-        self.open += (target - self.open) * t;
+        self.open += (target - self.open) * (1.0 - (-SLIDE_SPEED * dt).exp());
         if (self.open - target).abs() < 0.002 {
             self.open = target;
         }
@@ -245,6 +273,9 @@ impl UpgradePanel {
         for f in &mut self.flashes {
             *f = (*f - dt * FLASH_DECAY).max(0.0);
         }
+
+        self.time += dt;
+        self.badge_pop = (self.badge_pop - dt * BADGE_DECAY).max(0.0);
 
         self.hover = if self.open > HOVER_OPEN {
             c.and_then(|c| self.row_at(c, screen))
@@ -254,31 +285,25 @@ impl UpgradePanel {
     }
 
     fn row_at(&self, c: Vec2, screen: Vec2) -> Option<usize> {
-        let (min, max) = self.panel_rect(screen);
-        if c.x < min.x || c.x > max.x || c.y < min.y || c.y > max.y {
+        let x = self.panel_x();
+        if c.x < x || c.x > x + ROW_W {
             return None;
         }
 
-        let rows_top = min.y + Self::header_h();
-        if c.y < rows_top {
-            return None;
-        }
+        let tops = self.row_tops(screen);
 
-        let from_top = c.y - rows_top;
-        let idx = (from_top / (BUTTON_H + BUTTON_GAP)).floor() as i64;
-        let idx = idx.clamp(0, (NUM_UPGRADES - 1) as i64) as usize;
-        let within_button = from_top - idx as f32 * (BUTTON_H + BUTTON_GAP) <= BUTTON_H;
-
-        if within_button { Some(idx) } else { None }
+        (0..NUM_UPGRADES).find(|&i| {
+            self.rows[i] > 0.5 && c.y >= tops[i] && c.y <= tops[i] + BAR_H * self.rows[i]
+        })
     }
 
     pub fn hit_test(&self, cursor: Vec2, window: Vec2, screen: Vec2) -> Option<usize> {
         if self.open < CLICKABLE_OPEN {
             return None;
         }
+
         let scale = window_to_screen_scale(window, screen);
-        let c = cursor * scale;
-        self.row_at(c, screen)
+        self.row_at(cursor * scale, screen)
     }
 
     pub fn render_data(
@@ -294,168 +319,148 @@ impl UpgradePanel {
             return (instances, areas);
         }
 
+        let tops = self.row_tops(screen);
         let (min, _) = self.panel_rect(screen);
-        let defs = upgrade_defs();
 
-        self.push_counter(&mut instances, &mut areas, min, points, screen);
+        if points > 0 {
+            let text_w = measure(&self.counter);
+            let pop = 1.0 + self.badge_pop * BADGE_POP;
+            let badge = Vec2::new(text_w + BADGE_PAD * 2.0, BADGE_H) * pop;
+            let x = self.row_x(0);
+            let center = Vec2::new(x + ROW_W - badge.x * 0.5 / pop, min.y + BADGE_H * 0.5);
 
-        let rows_top = min.y + Self::header_h();
+            instances.push(pill_instance(
+                center,
+                badge,
+                screen,
+                BADGE_FILL,
+                BAR_OUTLINE,
+                OUTLINE_PX,
+            ));
 
-        for (i, (_name, stat_color)) in defs.iter().enumerate() {
-            let top = rows_top + i as f32 * (BUTTON_H + BUTTON_GAP);
-            let cy = top + BUTTON_H * 0.5;
-            let bar_left = min.x;
+            push_outlined(
+                &mut areas,
+                &self.counter,
+                center.x - text_w * 0.5,
+                center.y - COUNTER_LINE * 0.5,
+                screen,
+                WHITE,
+            );
+        }
 
-            let level = levels.get(i).copied().unwrap_or(0).min(MAX_LEVEL);
-            let afford = points > 0 && level < MAX_LEVEL;
+        for i in 0..NUM_UPGRADES {
+            let row = self.rows[i];
+            if row < 0.05 {
+                continue;
+            }
+
+            let x = self.row_x(i);
+            let max = self.maxes[i].max(1);
+            let level = levels[i].min(max);
+            let color = STAT_COLORS[i];
             let hovered = self.hover == Some(i);
             let flash = self.flashes[i];
+            let afford = points > 0 && levels[i] < self.maxes[i];
 
-            let track_f = if hovered { TRACK_HOVER_F } else { TRACK_F } + flash * 0.12;
-            instances.push(bar_ui_instance(
-                Vec2::new(bar_left + BAR_W * 0.5, cy),
-                Vec2::new(BAR_W, BUTTON_H),
+            let h = BAR_H * row;
+            let cy = tops[i] + h * 0.5;
+            let bar_cx = x + BAR_W * 0.5;
+            let track = if hovered { lighten(TRACK, 0.1) } else { TRACK };
+
+            instances.push(pill_instance(
+                Vec2::new(bar_cx, cy),
+                Vec2::new(BAR_W, h),
                 screen,
-                darken(*stat_color, BORDER_F),
+                with_alpha(track, row),
+                with_alpha(BAR_OUTLINE, row),
+                OUTLINE_PX,
             ));
-            let in_w = BAR_W - INSET * 2.0;
-            let in_h = BUTTON_H - INSET * 2.0;
-            instances.push(bar_ui_instance(
-                Vec2::new(bar_left + INSET + in_w * 0.5, cy),
-                Vec2::new(in_w, in_h),
-                screen,
-                darken(*stat_color, track_f),
-            ));
 
-            push_outlined(
-                &mut areas,
-                &self.labels[i],
-                bar_left + LABEL_PAD,
-                top + INSET + (TOP_ZONE - LABEL_LINE) * 0.5,
-                screen,
-            );
+            let inner_w = BAR_W - OUTLINE * 2.0;
+            let inner_h = (h - OUTLINE * 2.0).max(0.0);
+            let seg_w = (inner_w - SEG_GAP * (max - 1) as f32) / max as f32;
+            let left = x + OUTLINE;
 
-            let pill_left = bar_left + BAR_W - NUM_PAD - PILL;
-            let pill_top = top + INSET + (TOP_ZONE - PILL) * 0.5;
-            instances.push(bar_ui_instance(
-                Vec2::new(pill_left + PILL * 0.5, pill_top + PILL * 0.5),
-                Vec2::new(PILL, PILL),
-                screen,
-                lighten(darken(*stat_color, PILL_F), flash * 0.5),
-            ));
-            let number = &self.numbers[level as usize];
-            let num_w = measure(number);
-            push_outlined(
-                &mut areas,
-                number,
-                pill_left + (PILL - num_w) * 0.5,
-                pill_top + (PILL - NUM_LINE) * 0.5,
-                screen,
-            );
+            for k in 0..level {
+                let seg_left = left + k as f32 * (seg_w + SEG_GAP);
+                let mut seg = if hovered { lighten(color, 0.12) } else { color };
 
-            let strip_top = top + INSET + TOP_ZONE + 3.0;
-            let strip_left = bar_left + STRIP_PAD;
-            let strip_w = BAR_W - STRIP_PAD * 2.0;
-            let seg_w = (strip_w - SEG_GAP * (MAX_LEVEL - 1) as f32) / MAX_LEVEL as f32;
-            for k in 0..MAX_LEVEL {
-                let seg_left = strip_left + k as f32 * (seg_w + SEG_GAP);
-                let mut seg_color = if k < level {
-                    *stat_color
-                } else {
-                    darken(*stat_color, SEG_EMPTY_F)
-                };
-                if flash > 0.0 && level > 0 && k == level - 1 {
-                    seg_color = lighten(seg_color, flash);
+                if flash > 0.0 && k + 1 == level {
+                    seg = lighten(seg, flash * 0.7);
                 }
-                instances.push(bar_ui_instance(
-                    Vec2::new(seg_left + seg_w * 0.5, strip_top + STRIP_H * 0.5),
-                    Vec2::new(seg_w, STRIP_H),
+
+                instances.push(pill_instance(
+                    Vec2::new(seg_left + seg_w * 0.5, cy),
+                    Vec2::new(seg_w, inner_h),
                     screen,
-                    seg_color,
+                    with_alpha(seg, row),
+                    with_alpha(seg, 0.0),
+                    0.0,
                 ));
             }
 
-            let plus_left = bar_left + BAR_W + PLUS_GAP;
-            let (plus_outer, plus_inner) = if afford {
-                let inner = if hovered {
-                    lighten(*stat_color, flash * 0.4)
-                } else {
-                    darken(*stat_color, PLUS_INNER_F)
-                };
-                (*stat_color, inner)
+            if row > 0.6 {
+                let label = &self.labels[i];
+                push_outlined(
+                    &mut areas,
+                    label,
+                    bar_cx - measure(label) * 0.5,
+                    cy - LABEL_LINE * 0.5,
+                    screen,
+                    with_alpha(WHITE, row),
+                );
+
+                let key = &self.keys[i];
+                push_outlined(
+                    &mut areas,
+                    key,
+                    x + BAR_W - OUTLINE - 10.0 - measure(key),
+                    cy - KEY_LINE * 0.5,
+                    screen,
+                    with_alpha(WHITE, row * 0.6),
+                );
+            }
+
+            let plus_cx = x + BAR_W + PLUS_GAP + PLUS_D * 0.5;
+            let pulse = if afford {
+                1.0 + ((self.time * PULSE_SPEED + i as f32 * 0.7).sin() * 0.5 + 0.5) * PULSE_GROW
             } else {
-                (darken(LOCKED, 0.5), darken(LOCKED, 0.32))
+                1.0
             };
-            instances.push(bar_ui_instance(
-                Vec2::new(plus_left + PLUS_W * 0.5, cy),
-                Vec2::new(PLUS_W, BUTTON_H),
+            let d = PLUS_D * row * pulse;
+            let (fill, edge) = if afford {
+                let fill = if hovered {
+                    lighten(color, 0.25 + flash * 0.3)
+                } else {
+                    color
+                };
+                (fill, darken(color, 0.55))
+            } else {
+                (LOCKED, darken(LOCKED, 0.6))
+            };
+
+            instances.push(pill_instance(
+                Vec2::new(plus_cx, cy),
+                Vec2::new(d, d),
                 screen,
-                plus_outer,
+                with_alpha(fill, row),
+                with_alpha(edge, row),
+                OUTLINE_PX,
             ));
-            instances.push(bar_ui_instance(
-                Vec2::new(plus_left + PLUS_W * 0.5, cy),
-                Vec2::new(PLUS_W - INSET * 2.0, BUTTON_H - INSET * 2.0),
-                screen,
-                plus_inner,
-            ));
-            let plus_w = measure(&self.plus);
-            push_outlined(
-                &mut areas,
-                &self.plus,
-                plus_left + (PLUS_W - plus_w) * 0.5,
-                top + (BUTTON_H - PLUS_LINE) * 0.5,
-                screen,
-            );
+
+            if row > 0.6 {
+                push_outlined(
+                    &mut areas,
+                    &self.plus,
+                    plus_cx - measure(&self.plus) * 0.5,
+                    cy - PLUS_LINE * 0.5,
+                    screen,
+                    with_alpha(WHITE, if afford { row } else { row * 0.5 }),
+                );
+            }
         }
 
         (instances, areas)
-    }
-
-    fn push_counter<'a>(
-        &'a self,
-        instances: &mut Vec<EntityInstance>,
-        areas: &mut Vec<TextArea<'a>>,
-        min: Vec2,
-        points: u32,
-        screen: Vec2,
-    ) {
-        let mut rev_digits: Vec<u8> = Vec::new();
-        let mut n = points;
-        loop {
-            rev_digits.push((n % 10) as u8);
-            if n < 10 {
-                break;
-            }
-            n /= 10;
-        }
-
-        let x_w = measure(&self.x_mark);
-        let text_w = rev_digits
-            .iter()
-            .rev()
-            .fold(x_w, |acc, d| acc + measure(&self.digits[*d as usize]));
-
-        let pill_w = text_w + COUNTER_PAD * 2.0;
-        let pill_left = min.x + ROW_W - pill_w;
-        let cy = min.y + COUNTER_H * 0.5;
-
-        instances.push(bar_ui_instance(
-            Vec2::new(pill_left + pill_w * 0.5, cy),
-            Vec2::new(pill_w, COUNTER_H),
-            screen,
-            DARK_THEME.scoreboard_row,
-        ));
-
-        let mut x = pill_left + COUNTER_PAD;
-        let top = min.y + (COUNTER_H - COUNTER_LINE) * 0.5;
-        push_outlined(areas, &self.x_mark, x, top, screen);
-        x += x_w;
-        for d in rev_digits.iter().rev() {
-            let buffer = &self.digits[*d as usize];
-            let w = measure(buffer);
-            push_outlined(areas, buffer, x, top, screen);
-            x += w;
-        }
     }
 }
 
@@ -465,6 +470,7 @@ fn push_outlined<'a>(
     left: f32,
     top: f32,
     screen: Vec2,
+    color: [f32; 4],
 ) {
     let bounds = TextBounds {
         left: 0,
@@ -472,8 +478,8 @@ fn push_outlined<'a>(
         right: screen.x as i32,
         bottom: screen.y as i32,
     };
-    let outline_color = to_glyphon(DARK_THEME.fill_border);
-    let fill_color = to_glyphon([1.0, 1.0, 1.0, 1.0]);
+    let outline_color = to_glyphon(with_alpha(DARK_THEME.fill_border, color[3]));
+    let fill_color = to_glyphon(color);
 
     const DIRS: [(f32, f32); 8] = [
         (1.0, 0.0),
