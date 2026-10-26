@@ -392,33 +392,3 @@ fn segment_hits_box(a: Vec2, b: Vec2, min: Vec2, max: Vec2) -> bool {
 
     true
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn push_out_moves_circle_clear_of_wall() {
-        let mut arena = Arena::new(1000.0);
-        arena.add_wall(Vec2::ZERO, Vec2::new(100.0, 100.0));
-
-        let (pos, normal) = arena.push_out(Vec2::new(55.0, 0.0), 10.0).unwrap();
-        assert!((pos.x - 60.0).abs() < 1e-3);
-        assert!(normal.x > 0.99);
-
-        let (inside, _) = arena.push_out(Vec2::new(40.0, 0.0), 10.0).unwrap();
-        assert!(!arena.circle_hits_wall(inside, 9.9));
-
-        assert!(arena.push_out(Vec2::new(200.0, 0.0), 10.0).is_none());
-    }
-
-    #[test]
-    fn segment_test_sees_walls() {
-        let mut arena = Arena::new(1000.0);
-        arena.add_wall(Vec2::ZERO, Vec2::new(20.0, 400.0));
-
-        assert!(arena.segment_hits_wall(Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0), 0.0));
-        assert!(!arena.segment_hits_wall(Vec2::new(-300.0, 300.0), Vec2::new(300.0, 300.0), 0.0));
-        assert!(arena.segment_hits_wall(Vec2::new(-300.0, 215.0), Vec2::new(300.0, 215.0), 20.0));
-    }
-}

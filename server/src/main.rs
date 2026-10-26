@@ -74,8 +74,6 @@ async fn main() -> Result<(), ServerError> {
     // Channel system for the game state.
     let (game_channel_send, game_channel_recv) = unbounded_channel::<GameEvents>();
     let game_channel_send = Arc::new(game_channel_send);
-    // tank definitions come from content/tanks/*.lua now; the game state
-    // builds the tree itself and hot-reloads it in its loop
     let mut game_state =
         match GameState::new(game_channel_recv, connections.clone(), config.clone()) {
             Ok(state) => state,

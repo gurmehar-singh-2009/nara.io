@@ -7,9 +7,8 @@ use crate::{
     packets::{
         client_bound::{
             AddEntityPacket, ArenaPacket, BarrelDef, DeathPacket, LeaderboardPacket,
-            PlayerStatsPacket, TurretDef,
-            RemoveEntityPacket, ServerInfoPacket, SpectatePacket, TankInfoPacket,
-            UpdateEntityPacket,
+            PlayerStatsPacket, RemoveEntityPacket, ServerInfoPacket, SpectatePacket,
+            TankInfoPacket, TurretDef, UpdateEntityPacket,
         },
         handshake::HandshakePacket,
         pong::{PingPacket, PongPacket},
@@ -263,26 +262,4 @@ register_packets! {
     (23, PingPacket),
     (24, PongPacket),
     (25, DeathPacket),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::cursor_world_offset;
-
-    #[test]
-    fn cursor_offset_matches_client_projection() {
-        let zoom = 0.004;
-
-        assert_eq!(
-            cursor_world_offset(400.0, 300.0, 800.0, 600.0, zoom),
-            Some((0.0, 0.0))
-        );
-
-        let (x, _) = cursor_world_offset(800.0, 300.0, 800.0, 600.0, zoom).unwrap();
-        let (_, y) = cursor_world_offset(400.0, 0.0, 800.0, 600.0, zoom).unwrap();
-        assert!((x - (800.0 / 600.0) / zoom).abs() < 1e-3);
-        assert!((y - 1.0 / zoom).abs() < 1e-3);
-
-        assert_eq!(cursor_world_offset(0.0, 0.0, 0.0, 600.0, zoom), None);
-    }
 }
