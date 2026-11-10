@@ -23,11 +23,6 @@
 //   aiming in a relative direction often.
 // - also just block vpns, proxy, etc (scrape free proxy sites, they used that
 //   for arras).
-//
-// Wired into the game loop by `GameState`: aim samples are recorded on every
-// `PlayerAim` event, upgrade requests are interval-checked in
-// `apply_tank_upgrade`, and the multibox scan / decay / flag reporting pass is
-// `run_anti_cheat_pass`.
 
 use std::{
     collections::VecDeque,

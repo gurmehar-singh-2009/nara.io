@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use glam::Vec2;
-use glyphon::{Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds, cosmic_text::Weight};
+use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Weight};
 use shared::packets::{
     TankOption,
     client_bound::{BarrelDef, TurretDef},
@@ -11,8 +11,9 @@ use crate::{
     entities::tank::{TankDraw, tank_instances},
     render::{
         buffers::EntityInstance,
-        colours::{Color, DARK_THEME, to_glyphon, with_alpha},
+        colours::{Color, theme, with_alpha},
         scoreboard::{pill_instance, rounded_ui_instance},
+        text::{TextArea, TextBounds},
     },
 };
 
@@ -46,9 +47,6 @@ const TEXT_OUTLINE_PX: f32 = 1.5;
 const IGNORE_W: f32 = 104.0;
 const IGNORE_H: f32 = 30.0;
 const IGNORE_GAP: f32 = 12.0;
-const IGNORE_FILL: [f32; 4] = [0.2, 0.2, 0.2, 0.85];
-const IGNORE_HOVER: [f32; 4] = [0.32, 0.32, 0.32, 0.92];
-const IGNORE_BORDER: [f32; 4] = [0.08, 0.08, 0.08, 0.9];
 
 const PLAYER_CLEARANCE: f32 = 110.0;
 const MIN_FIT: f32 = 0.6;
@@ -103,23 +101,24 @@ pub fn default_classes() -> Vec<TankClassDef> {
 }
 
 fn tank_color(index: usize) -> Color {
-    const PALETTE: [Color; 7] = [
-        DARK_THEME.team_blue,   // #00B2E1
-        DARK_THEME.team_red,    // #F14E54
-        DARK_THEME.team_purple, // #F177DD
-        DARK_THEME.team_green,  // #00E16E
-        DARK_THEME.square,      // #FFE869
-        DARK_THEME.pentagon,    // #768DFF
-        DARK_THEME.triangle,    // #FC7677
+    let t = theme();
+    let palette: [Color; 7] = [
+        t.team_blue,
+        t.team_red,
+        t.team_purple,
+        t.team_green,
+        t.square,
+        t.pentagon,
+        t.triangle,
     ];
-    PALETTE[index % PALETTE.len()]
+    palette[index % palette.len()]
 }
 
 fn bold() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif).weight(Weight::BOLD)
 }
 
-fn make_buffer(fs: &mut glyphon::FontSystem, text: &str) -> Buffer {
+fn make_buffer(fs: &mut cosmic_text::FontSystem, text: &str) -> Buffer {
     let mut buffer = Buffer::new(fs, Metrics::new(NAME_FONT, NAME_LINE));
     buffer.set_text(text, &bold(), Shaping::Basic, None);
     buffer.shape_until_scroll(fs, false);
@@ -235,7 +234,7 @@ pub struct TankUpgradePanel {
 }
 
 impl TankUpgradePanel {
-    pub fn new(fs: &mut glyphon::FontSystem, defs: Vec<TankClassDef>) -> Self {
+    pub fn new(fs: &mut cosmic_text::FontSystem, defs: Vec<TankClassDef>) -> Self {
         let mut panel = Self {
             defs: Vec::new(),
             labels: Vec::new(),
@@ -268,7 +267,7 @@ impl TankUpgradePanel {
         panel
     }
 
-    fn set_defs(&mut self, fs: &mut glyphon::FontSystem, defs: Vec<TankClassDef>) {
+    fn set_defs(&mut self, fs: &mut cosmic_text::FontSystem, defs: Vec<TankClassDef>) {
         self.labels = defs.iter().map(|d| make_buffer(fs, &d.name)).collect();
         self.hovers = vec![0.0; defs.len()];
         self.defs = defs;
@@ -368,7 +367,7 @@ impl TankUpgradePanel {
 
     pub fn tick(
         &mut self,
-        fs: &mut glyphon::FontSystem,
+        fs: &mut cosmic_text::FontSystem,
         dt: f32,
         available: bool,
         cursor: Option<Vec2>,
@@ -511,9 +510,9 @@ impl TankUpgradePanel {
             let (min, max) = self.ignore_rect(screen);
             let center = (min + max) * 0.5;
             let fill = if self.ignore_hovered {
-                IGNORE_HOVER
+                lighten(theme().bar_background, 0.1)
             } else {
-                IGNORE_FILL
+                theme().bar_background
             };
             let alpha = ((self.open - 0.5) * 2.0).clamp(0.0, 1.0);
 
@@ -522,7 +521,7 @@ impl TankUpgradePanel {
                 Vec2::new(IGNORE_W, IGNORE_H),
                 screen,
                 with_alpha(fill, alpha),
-                with_alpha(IGNORE_BORDER, alpha),
+                with_alpha(theme().bar_border, alpha),
                 2.0,
             ));
 
@@ -557,38 +556,14 @@ fn push_outlined<'a>(
         right: screen.x as i32,
         bottom: screen.y as i32,
     };
-    let outline_color = to_glyphon(with_alpha(DARK_THEME.fill_border, alpha));
-    let fill_color = to_glyphon([1.0, 1.0, 1.0, alpha]);
-
-    const DIRS: [(f32, f32); 8] = [
-        (1.0, 0.0),
-        (-1.0, 0.0),
-        (0.0, 1.0),
-        (0.0, -1.0),
-        (1.0, 1.0),
-        (1.0, -1.0),
-        (-1.0, 1.0),
-        (-1.0, -1.0),
-    ];
-    for (dx, dy) in DIRS {
-        areas.push(TextArea {
-            buffer,
-            left: left + dx * TEXT_OUTLINE_PX,
-            top: top + dy * TEXT_OUTLINE_PX,
-            scale,
-            bounds,
-            default_color: outline_color,
-            custom_glyphs: &[],
-        });
-    }
-
     areas.push(TextArea {
         buffer,
         left,
         top,
         scale,
         bounds,
-        default_color: fill_color,
-        custom_glyphs: &[],
+        color: [1.0, 1.0, 1.0, alpha],
+        outline: with_alpha(theme().fill_border, alpha),
+        outline_px: TEXT_OUTLINE_PX,
     });
 }

@@ -1,3 +1,6 @@
+//! Handshake packet.
+//! Used to establish the initial encryption.
+
 use bitcode::{Decode, Encode};
 
 use crate::junk_packet;

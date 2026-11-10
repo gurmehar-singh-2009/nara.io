@@ -1,4 +1,6 @@
-// this just toggles auto spin
+//! The autospin packet.
+//! This toggles autospin on/off.
+//! Toggled using the keybind (`C`).
 
 use bitcode::{Decode, Encode};
 

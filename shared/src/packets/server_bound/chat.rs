@@ -1,3 +1,5 @@
+//! Sends a chat message.
+
 use bitcode::{Decode, Encode};
 
 use crate::junk_packet;

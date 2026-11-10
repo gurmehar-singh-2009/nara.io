@@ -4,7 +4,7 @@ use shared::packets::NO_TEAM;
 use crate::{
     render::{
         buffers::EntityInstance,
-        colours::{DARK_THEME, team_color, with_alpha},
+        colours::{theme, team_color, with_alpha},
         scoreboard::rounded_ui_instance,
     },
     structs::game_state::GameState,
@@ -30,8 +30,8 @@ pub fn render_data(game: &GameState, screen: Vec2) -> Vec<EntityInstance> {
         center,
         Vec2::new(SIZE, SIZE),
         screen,
-        with_alpha(DARK_THEME.minimap_background, 0.9),
-        with_alpha(DARK_THEME.minimap_border, 0.9),
+        with_alpha(theme().minimap_background, 0.9),
+        with_alpha(theme().minimap_border, 0.9),
         3.0,
         8.0,
     ));
@@ -46,7 +46,7 @@ pub fn render_data(game: &GameState, screen: Vec2) -> Vec<EntityInstance> {
 
     for z in game.arena.zones.iter() {
         let tint = if z.team == NO_TEAM {
-            DARK_THEME.fallen_boss
+            theme().fallen_boss
         } else {
             team_color(z.team)
         };
@@ -67,8 +67,8 @@ pub fn render_data(game: &GameState, screen: Vec2) -> Vec<EntityInstance> {
             to_map(Vec2::new(w.x, w.y)),
             to_map_size(w.w, w.h).max(Vec2::splat(1.0)),
             screen,
-            with_alpha(DARK_THEME.maze_walls, 0.95),
-            with_alpha(DARK_THEME.maze_walls, 0.0),
+            with_alpha(theme().maze_walls, 0.95),
+            with_alpha(theme().maze_walls, 0.0),
             0.0,
             0.0,
         ));
@@ -89,7 +89,7 @@ pub fn render_data(game: &GameState, screen: Vec2) -> Vec<EntityInstance> {
         }
 
         let (d, color) = if is_self {
-            (SELF_DOT, DARK_THEME.team_green)
+            (SELF_DOT, theme().team_green)
         } else {
             (TEAMMATE_DOT, team_color(p.team))
         };
@@ -105,7 +105,7 @@ pub fn render_data(game: &GameState, screen: Vec2) -> Vec<EntityInstance> {
             Vec2::new(d, d),
             screen,
             color,
-            DARK_THEME.fill_border,
+            theme().fill_border,
             1.5,
             d * 0.5,
         ));

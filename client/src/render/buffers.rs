@@ -1,24 +1,27 @@
-use bytemuck::{Pod, Zeroable};
-use glyphon::{Attrs, Color, FontSystem, Metrics};
-use wgpu::{BufferAddress, VertexAttribute, VertexBufferLayout, VertexStepMode};
+use std::mem::size_of;
 
-pub const SHAPE_TRAPEZOID: u32 = 8;
+use bytemuck::{Pod, Zeroable};
+use cosmic_text::{Attrs, Color, FontSystem, Metrics};
+use wgpu::{BufferAddress, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
+/// Represents a Vertex position.
 pub struct Vertex {
+    /// The position.
     pub position: [f32; 2],
 }
 
 impl Vertex {
-    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[wgpu::VertexAttribute {
+    /// Returns the `VertexBufferLayout` for this vertex.
+    pub fn desc() -> VertexBufferLayout<'static> {
+        VertexBufferLayout {
+            array_stride: size_of::<Vertex>() as BufferAddress,
+            step_mode: VertexStepMode::Vertex,
+            attributes: &[VertexAttribute {
                 offset: 0,
                 shader_location: 0,
-                format: wgpu::VertexFormat::Float32x2,
+                format: VertexFormat::Float32x2,
             }],
         }
     }
@@ -26,11 +29,15 @@ impl Vertex {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
+/// Represents an entity instance to render.
 pub struct EntityInstance {
+    /// The position of the entity.
     pub position: [f32; 2],
+    /// The width and height of the entity.
     pub size: [f32; 2],
+    /// The rotation of the entity.
     pub rotation: f32,
-
+    /// The shape type (should probably be an enum but whatever!)
     /// 0 = Circle
     /// 1 = Box
     /// 2 = Grid
@@ -39,14 +46,19 @@ pub struct EntityInstance {
     /// 5 = screen pill
     /// 6 = screen circle
     pub shape_type: u32,
-
+    /// The number of sides of the entity.
     /// 3 = Triangle
     /// 4 = Square
     /// 5 = Pentagon
     pub sides: u32,
+    /// The fill color of the entity.
     pub fill_color: [f32; 4],
+    /// The border color of the entity.
     pub border_color: [f32; 4],
+    /// THe border thickness of the entity.
     pub border_thickness: f32,
+    /// This has a few meanings depending on what you're rendering:
+    /// WILL DO LATER!
     pub extra_param: f32,
 }
 
@@ -91,7 +103,7 @@ impl EntityInstance {
             position,
             size: [wide, height],
             rotation,
-            shape_type: SHAPE_TRAPEZOID,
+            shape_type: 8,
             sides: 0,
             fill_color,
             border_color,
@@ -130,19 +142,19 @@ impl Default for CameraUniform {
 }
 
 pub struct TextComponent {
-    pub buffer: glyphon::Buffer,
+    pub buffer: cosmic_text::Buffer,
     pub color: Color,
     pub offset: [f32; 2],
 }
 
 impl TextComponent {
     pub fn new(font_system: &mut FontSystem, initial_text: &str) -> Self {
-        let mut buffer = glyphon::Buffer::new(font_system, Metrics::new(16.0, 20.0));
+        let mut buffer = cosmic_text::Buffer::new(font_system, Metrics::new(16.0, 20.0));
 
         buffer.set_text(
             initial_text,
-            &Attrs::new().family(glyphon::Family::SansSerif),
-            glyphon::Shaping::Basic,
+            &Attrs::new().family(cosmic_text::Family::SansSerif),
+            cosmic_text::Shaping::Basic,
             None,
         );
         buffer.shape_until_scroll(font_system, false);
@@ -157,8 +169,8 @@ impl TextComponent {
     pub fn update_text(&mut self, font_system: &mut FontSystem, new_text: &str) {
         self.buffer.set_text(
             new_text,
-            &Attrs::new().family(glyphon::Family::SansSerif),
-            glyphon::Shaping::Basic,
+            &Attrs::new().family(cosmic_text::Family::SansSerif),
+            cosmic_text::Shaping::Basic,
             None,
         );
 

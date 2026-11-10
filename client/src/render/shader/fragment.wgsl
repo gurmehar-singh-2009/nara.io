@@ -1,3 +1,7 @@
+/*
+NOTE: this file previously was hand-made. however for the interest of optimization and simplification, i had Opus 5.5 rewrite this.
+*/
+
 struct CameraUniform {
     view_proj: mat4x4<f32>,
     camera_pos: vec2<f32>,

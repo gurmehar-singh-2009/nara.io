@@ -2,12 +2,13 @@
 // press u to quick toggle to test it out
 
 use glam::Vec2;
-use glyphon::{Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds, cosmic_text::Weight};
+use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Weight};
 
 use crate::render::{
     buffers::EntityInstance,
-    colours::{DARK_THEME, to_glyphon, with_alpha},
+    colours::{theme, with_alpha},
     scoreboard::pill_instance,
+    text::{TextArea, TextBounds},
 };
 
 const NUM_UPGRADES: usize = 8;
@@ -55,35 +56,36 @@ const BADGE_POP: f32 = 0.35;
 const BADGE_DECAY: f32 = 3.0;
 const OUTLINE_PX: f32 = 3.0;
 
-const TRACK: [f32; 4] = [0.27, 0.27, 0.27, 0.92];
-const BAR_OUTLINE: [f32; 4] = [0.12, 0.12, 0.12, 0.95];
-const BADGE_FILL: [f32; 4] = [0.16, 0.16, 0.16, 0.92];
 const LOCKED: [f32; 4] = [0.55, 0.55, 0.55, 1.0];
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
-const STAT_COLORS: [[f32; 4]; NUM_UPGRADES] = [
-    [0.933, 0.714, 0.565, 1.0],
-    [0.925, 0.424, 0.941, 1.0],
-    [0.604, 0.424, 0.941, 1.0],
-    [0.424, 0.588, 0.941, 1.0],
-    [0.941, 0.851, 0.424, 1.0],
-    [0.941, 0.424, 0.424, 1.0],
-    [0.596, 0.941, 0.424, 1.0],
-    [0.424, 0.941, 0.925, 1.0],
-];
+/// Bar colours in panel order.
+fn stat_color(i: usize) -> [f32; 4] {
+    let t = theme();
+    [
+        t.stat_regen,
+        t.stat_max_health,
+        t.stat_body_damage,
+        t.stat_bullet_speed,
+        t.stat_penetration,
+        t.stat_bullet_damage,
+        t.stat_reload,
+        t.stat_movement,
+    ][i]
+}
 
 fn bold() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif).weight(Weight::BOLD)
 }
 
-fn make_buffer(fs: &mut glyphon::FontSystem, metrics: Metrics, text: &str) -> Buffer {
+fn make_buffer(fs: &mut cosmic_text::FontSystem, metrics: Metrics, text: &str) -> Buffer {
     let mut buffer = Buffer::new(fs, metrics);
     buffer.set_text(text, &bold(), Shaping::Basic, None);
     buffer.shape_until_scroll(fs, false);
     buffer
 }
 
-fn reshape(fs: &mut glyphon::FontSystem, buffer: &mut Buffer, text: &str) {
+fn reshape(fs: &mut cosmic_text::FontSystem, buffer: &mut Buffer, text: &str) {
     buffer.set_text(text, &bold(), Shaping::Basic, None);
     buffer.shape_until_scroll(fs, false);
 }
@@ -136,7 +138,7 @@ pub struct UpgradePanel {
 }
 
 impl UpgradePanel {
-    pub fn new(fs: &mut glyphon::FontSystem) -> Self {
+    pub fn new(fs: &mut cosmic_text::FontSystem) -> Self {
         let labels = (0..NUM_UPGRADES)
             .map(|_| make_buffer(fs, Metrics::new(LABEL_FONT, LABEL_LINE), ""))
             .collect();
@@ -178,7 +180,7 @@ impl UpgradePanel {
 
     pub fn sync(
         &mut self,
-        fs: &mut glyphon::FontSystem,
+        fs: &mut cosmic_text::FontSystem,
         names: &[String],
         maxes: &[u8; NUM_UPGRADES],
         points: u32,
@@ -333,8 +335,8 @@ impl UpgradePanel {
                 center,
                 badge,
                 screen,
-                BADGE_FILL,
-                BAR_OUTLINE,
+                theme().bar_background,
+                theme().bar_border,
                 OUTLINE_PX,
             ));
 
@@ -357,7 +359,7 @@ impl UpgradePanel {
             let x = self.row_x(i);
             let max = self.maxes[i].max(1);
             let level = levels[i].min(max);
-            let color = STAT_COLORS[i];
+            let color = stat_color(i);
             let hovered = self.hover == Some(i);
             let flash = self.flashes[i];
             let afford = points > 0 && levels[i] < self.maxes[i];
@@ -365,14 +367,18 @@ impl UpgradePanel {
             let h = BAR_H * row;
             let cy = tops[i] + h * 0.5;
             let bar_cx = x + BAR_W * 0.5;
-            let track = if hovered { lighten(TRACK, 0.1) } else { TRACK };
+            let track = if hovered {
+                lighten(theme().bar_background, 0.1)
+            } else {
+                theme().bar_background
+            };
 
             instances.push(pill_instance(
                 Vec2::new(bar_cx, cy),
                 Vec2::new(BAR_W, h),
                 screen,
                 with_alpha(track, row),
-                with_alpha(BAR_OUTLINE, row),
+                with_alpha(theme().bar_border, row),
                 OUTLINE_PX,
             ));
 
@@ -478,38 +484,14 @@ fn push_outlined<'a>(
         right: screen.x as i32,
         bottom: screen.y as i32,
     };
-    let outline_color = to_glyphon(with_alpha(DARK_THEME.fill_border, color[3]));
-    let fill_color = to_glyphon(color);
-
-    const DIRS: [(f32, f32); 8] = [
-        (1.0, 0.0),
-        (-1.0, 0.0),
-        (0.0, 1.0),
-        (0.0, -1.0),
-        (1.0, 1.0),
-        (1.0, -1.0),
-        (-1.0, 1.0),
-        (-1.0, -1.0),
-    ];
-    for (dx, dy) in DIRS {
-        areas.push(TextArea {
-            buffer,
-            left: left + dx * TEXT_OUTLINE_PX,
-            top: top + dy * TEXT_OUTLINE_PX,
-            scale: 1.0,
-            bounds,
-            default_color: outline_color,
-            custom_glyphs: &[],
-        });
-    }
-
     areas.push(TextArea {
         buffer,
         left,
         top,
         scale: 1.0,
         bounds,
-        default_color: fill_color,
-        custom_glyphs: &[],
+        color,
+        outline: with_alpha(theme().fill_border, color[3]),
+        outline_px: TEXT_OUTLINE_PX,
     });
 }

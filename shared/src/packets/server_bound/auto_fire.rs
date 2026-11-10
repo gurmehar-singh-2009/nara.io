@@ -1,6 +1,6 @@
-// auto fire toggles on/off
-// client handles this
-// same packet used for actual auto fire and just holding mouse
+//! The autofire packet.
+//! This toggles autofire on/off. Used for both holding the mouse and using the
+//! autofire keybind (`E`).
 
 use bitcode::{Decode, Encode};
 

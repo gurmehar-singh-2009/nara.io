@@ -1,14 +1,13 @@
 use glam::Vec2;
-use glyphon::{
-    Attrs, Buffer, Color, Family, Metrics, Shaping, TextArea, TextBounds, cosmic_text::Weight,
-};
+use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Weight};
 use shared::packets::{KILLER_PENTAGON, KILLER_SQUARE, KILLER_TANK, KILLER_TRIANGLE};
 
 use crate::{
     render::{
         buffers::EntityInstance,
-        colours::{DARK_THEME, PLAYER_BLUE, entity_color, to_glyphon, with_alpha},
+        colours::{theme, PLAYER_BLUE, entity_color, with_alpha},
         scoreboard::{pill_instance, rounded_ui_instance},
+        text::{TextArea, TextBounds},
         tank_upgrades::{TankClassDef, icon_scale, push_tank_icon, screen_to_world},
     },
     structs::game_state::DeathInfo,
@@ -76,14 +75,14 @@ fn bold() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif).weight(Weight::BOLD)
 }
 
-fn make_buffer(fs: &mut glyphon::FontSystem, size: f32, text: &str) -> Buffer {
+fn make_buffer(fs: &mut cosmic_text::FontSystem, size: f32, text: &str) -> Buffer {
     let mut buffer = Buffer::new(fs, Metrics::new(size, size * 1.2));
     buffer.set_text(text, &bold(), Shaping::Basic, None);
     buffer.shape_until_scroll(fs, false);
     buffer
 }
 
-fn reshape(fs: &mut glyphon::FontSystem, buffer: &mut Buffer, text: &str) {
+fn reshape(fs: &mut cosmic_text::FontSystem, buffer: &mut Buffer, text: &str) {
     buffer.set_text(text, &bold(), Shaping::Basic, None);
     buffer.shape_until_scroll(fs, false);
 }
@@ -163,7 +162,7 @@ pub struct DeathScreen {
 }
 
 impl DeathScreen {
-    pub fn new(fs: &mut glyphon::FontSystem) -> Self {
+    pub fn new(fs: &mut cosmic_text::FontSystem) -> Self {
         Self {
             info: None,
             icon: None,
@@ -189,12 +188,12 @@ impl DeathScreen {
         self.info.is_some()
     }
 
-    pub fn show(&mut self, fs: &mut glyphon::FontSystem, info: DeathInfo) {
+    pub fn show(&mut self, fs: &mut cosmic_text::FontSystem, info: DeathInfo) {
         let color = match info.killer_kind {
             KILLER_TANK => entity_color(info.killer_team, false),
-            KILLER_SQUARE => DARK_THEME.square,
-            KILLER_TRIANGLE => DARK_THEME.triangle,
-            KILLER_PENTAGON => DARK_THEME.pentagon,
+            KILLER_SQUARE => theme().square,
+            KILLER_TRIANGLE => theme().triangle,
+            KILLER_PENTAGON => theme().pentagon,
             _ => ARENA_COLOR,
         };
 
@@ -259,7 +258,7 @@ impl DeathScreen {
 
     pub fn tick(
         &mut self,
-        fs: &mut glyphon::FontSystem,
+        fs: &mut cosmic_text::FontSystem,
         dt: f32,
         cursor: Option<Vec2>,
         window: Vec2,
@@ -495,39 +494,14 @@ fn push_centered<'a>(
         bottom: screen.y as i32,
     };
     let left = cx - size_of(buffer).x * 0.5;
-    let outline = to_glyphon(with_alpha(DARK_THEME.fill_border, color[3]));
-    let fill: Color = to_glyphon(color);
-
-    const DIRS: [(f32, f32); 8] = [
-        (1.0, 0.0),
-        (-1.0, 0.0),
-        (0.0, 1.0),
-        (0.0, -1.0),
-        (1.0, 1.0),
-        (1.0, -1.0),
-        (-1.0, 1.0),
-        (-1.0, -1.0),
-    ];
-
-    for (dx, dy) in DIRS {
-        areas.push(TextArea {
-            buffer,
-            left: left + dx * OUTLINE_PX,
-            top: top + dy * OUTLINE_PX,
-            scale: 1.0,
-            bounds,
-            default_color: outline,
-            custom_glyphs: &[],
-        });
-    }
-
     areas.push(TextArea {
         buffer,
         left,
         top,
         scale: 1.0,
         bounds,
-        default_color: fill,
-        custom_glyphs: &[],
+        color,
+        outline: with_alpha(theme().fill_border, color[3]),
+        outline_px: OUTLINE_PX,
     });
 }

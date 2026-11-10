@@ -14,11 +14,7 @@ fn main() {
             .subsec_nanos()
             & 0xff) as u8;
 
-        fs::write(
-            seed_file,
-            format!("pub const PACKET_SEED: u8 = {};\n", seed),
-        )
-        .unwrap();
+        fs::write(seed_file, format!("pub const PACKET_SEED: u8 = {seed};\n")).unwrap();
     }
 
     println!("cargo:rerun-if-changed=build.rs");

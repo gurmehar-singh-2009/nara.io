@@ -2757,6 +2757,8 @@ impl GameState {
                 continue;
             };
 
+            entities.drones.set_owner_scale(i, scale);
+
             let cursor = entity_to_conn
                 .get(&owner)
                 .and_then(|conn| self.mouse_offsets.get(conn))
@@ -3548,6 +3550,7 @@ impl GameState {
                     team: zone.team,
                     barrel: 0,
                     radius: cfg.drone_radius,
+                    scale: 1.0,
                     health: cfg.drone_health,
                     recoil: 0,
                     lifetime: None,
@@ -3736,6 +3739,7 @@ impl GameState {
 
                 if let Some(cap) = drone_cap {
                     let dcfg = &self.config.drone;
+                    let radius = radius * dcfg.size_mult;
                     let max_speed = self.config.player.speed
                         * dcfg.speed_mult
                         * (1.0 + dcfg.speed_per_stat * stats[3] as f32)
@@ -3751,6 +3755,7 @@ impl GameState {
                         team,
                         barrel: i,
                         radius,
+                        scale: tank_scale,
                         health,
                         recoil: recoil_info(owner_conn, i, &self.config),
                         lifetime: (cap == u32::MAX)

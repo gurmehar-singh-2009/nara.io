@@ -1,7 +1,12 @@
 [package]
 name = "client"
-version = "0.1.0"
+description = "client for nara.io"
+version = "1.0.0"
 edition = "2024"
+license-file = "LICENSE.md"
+repository = "https://github.com/gurmehar-singh-2009/nara.io"
+keywords = ["nara.io", "diep.io clone", "arras.io clone", "havre.io clone"]
+categories = ["game", "webgame", "diep.io"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -35,7 +40,7 @@ winit = { version = "0.30", features = ["android-native-activity"] }
 glam = "0.33.2"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 js-sys = "0.3.103"
-glyphon = "0.12.0"
+cosmic-text = "0.19.0"
 chacha20poly1305 = { workspace = true }
 hkdf = { workspace = true }
 sha2 = { workspace = true }
@@ -57,6 +62,7 @@ features = [
     "EventTarget",
     "MouseEvent",
     "DomTokenList",
+    "Storage",
 ]
 
 [dependencies.image]

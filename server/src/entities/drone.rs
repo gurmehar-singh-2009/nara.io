@@ -18,7 +18,10 @@ pub struct DroneSpawn {
     pub owner: EntityId,
     pub team: u8,
     pub barrel: usize,
+    /// Radius at spawn, already multiplied by `scale`.
     pub radius: f32,
+    /// Owner's level scale at spawn. The radius follows the owner's scale from then on.
+    pub scale: f32,
     pub health: f32,
     pub recoil: u32,
     pub lifetime: Option<f32>,
@@ -42,6 +45,8 @@ pub struct Drones {
     max_speeds: Vec<f32>,
     damages: Vec<u32>,
     radii: Vec<f32>,
+    /// Radius at level scale 1.0.
+    base_radii: Vec<f32>,
     healths: Vec<f32>,
     max_healths: Vec<f32>,
     recoils: Vec<u32>,
@@ -68,6 +73,7 @@ impl Drones {
             max_speeds: vec![],
             damages: vec![],
             radii: vec![],
+            base_radii: vec![],
             healths: vec![],
             max_healths: vec![],
             recoils: vec![],
@@ -96,6 +102,7 @@ impl Drones {
         self.max_speeds.push(d.max_speed);
         self.damages.push(d.damage);
         self.radii.push(d.radius);
+        self.base_radii.push(d.radius / d.scale.max(f32::EPSILON));
         self.healths.push(d.health);
         self.max_healths.push(d.health);
         self.recoils.push(d.recoil);
@@ -129,6 +136,7 @@ impl Drones {
         self.max_speeds.swap_remove(i);
         self.damages.swap_remove(i);
         self.radii.swap_remove(i);
+        self.base_radii.swap_remove(i);
         self.healths.swap_remove(i);
         self.max_healths.swap_remove(i);
         self.recoils.swap_remove(i);
@@ -155,6 +163,11 @@ impl Drones {
                 self.remove(i);
             }
         }
+    }
+
+    /// Keeps a drone the right size for its owner as the owner levels up.
+    pub fn set_owner_scale(&mut self, i: usize, scale: f32) {
+        self.radii[i] = self.base_radii[i] * scale;
     }
 
     pub fn count_for(&self, owner: EntityId, barrel: usize) -> usize {

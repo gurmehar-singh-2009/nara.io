@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use shared::packets::NO_TEAM;
 
 pub type Color = [f32; 4];
@@ -5,16 +7,6 @@ pub type Color = [f32; 4];
 #[inline]
 pub fn with_alpha(color: Color, alpha: f32) -> Color {
     [color[0], color[1], color[2], color[3] * alpha]
-}
-
-#[inline]
-pub fn to_glyphon(color: Color) -> glyphon::Color {
-    glyphon::Color::rgba(
-        (color[0] * 255.0) as u8,
-        (color[1] * 255.0) as u8,
-        (color[2] * 255.0) as u8,
-        (color[3] * 255.0) as u8,
-    )
 }
 
 #[inline]
@@ -27,17 +19,19 @@ pub fn darken(color: Color, factor: f32) -> Color {
     ]
 }
 
-const TANK_BODY: Color = [0.0, 0.698, 0.882, 1.0];
-const TANK_OUTLINE: Color = [0.0, 0.520, 0.657, 1.0];
 const BARREL_FILL: Color = [0.600, 0.600, 0.600, 1.0];
-const BARREL_EDGE: Color = [0.447, 0.447, 0.447, 1.0];
 
+/// Our blue. Used for team 0, your own tank in FFA, and anything that should match it.
+pub const PLAYER_BLUE: Color = [0.22, 0.55, 0.98, 1.0];
 const TEAM_RED: Color = [0.945, 0.306, 0.329, 1.0];
 const TEAM_PURPLE: Color = [0.945, 0.467, 0.867, 1.0];
 const TEAM_GREEN: Color = [0.0, 0.882, 0.431, 1.0];
 
 const HEALTH_BG: Color = [0.149, 0.149, 0.149, 1.0];
 const HEALTH_FG: Color = [0.557, 1.0, 0.376, 1.0];
+/// Same rim light mode gets from `outline_for` (fill * 0.75), used in both themes so the
+/// bar never gets dark mode's flat black outline.
+const HEALTH_RIM: Color = [0.418, 0.750, 0.282, 1.0];
 
 const XP_FILL: Color = [1.0, 0.871, 0.263, 1.0];
 
@@ -46,14 +40,14 @@ const TRIANGLE: Color = [0.988, 0.463, 0.467, 1.0];
 const PENTAGON: Color = [0.463, 0.553, 1.0, 1.0];
 const FALLEN: Color = [0.549, 0.549, 0.549, 1.0];
 
-const STAT_REGEN: Color = [0.945, 0.467, 0.867, 1.0]; // pink
-const STAT_MAX_HEALTH: Color = [0.580, 0.360, 0.910, 1.0]; // purple
-const STAT_BODY: Color = [0.988, 0.463, 0.467, 1.0]; // red
-const STAT_B_SPEED: Color = [0.290, 0.500, 1.000, 1.0]; // blue
-const STAT_PEN: Color = [1.000, 0.871, 0.263, 1.0]; // yellow
-const STAT_B_DMG: Color = [1.000, 0.490, 0.300, 1.0]; // orange-red
-const STAT_RELOAD: Color = [0.720, 0.890, 0.310, 1.0]; // yellow-green
-const STAT_MOVE: Color = [0.320, 0.870, 0.930, 1.0]; // cyan
+const STAT_REGEN: Color = [0.933, 0.714, 0.565, 1.0]; // #EEB690
+const STAT_MAX_HEALTH: Color = [0.925, 0.424, 0.941, 1.0]; // #EC6CF0
+const STAT_BODY: Color = [0.604, 0.424, 0.941, 1.0]; // #9A6CF0
+const STAT_B_SPEED: Color = [0.424, 0.588, 0.941, 1.0]; // #6C96F0
+const STAT_PEN: Color = [0.941, 0.851, 0.424, 1.0]; // #F0D96C
+const STAT_B_DMG: Color = [0.941, 0.424, 0.424, 1.0]; // #F06C6C
+const STAT_RELOAD: Color = [0.596, 0.941, 0.424, 1.0]; // #98F06C
+const STAT_MOVE: Color = [0.424, 0.941, 0.925, 1.0]; // #6CF0EC
 
 pub struct DiepTheme {
     pub background: Color,
@@ -64,11 +58,7 @@ pub struct DiepTheme {
     pub grid: Color,
     pub grid_alpha: f32,
 
-    pub tank_body: Color,
-    pub tank_outline: Color,
     pub barrel: Color,
-    pub barrel_outline: Color,
-    pub bullet: Color,
 
     pub team_blue: Color,
     pub team_red: Color,
@@ -77,10 +67,17 @@ pub struct DiepTheme {
 
     pub health_bar_background: Color,
     pub health_bar_foreground: Color,
+    pub health_bar_border: Color,
 
     pub xp_bar_fill: Color,
     pub score_bar_fill: Color,
+    /// Track behind every bar and the fill of every pill/box in the HUD.
     pub bar_background: Color,
+    /// Edge of every bar, pill and HUD box.
+    pub bar_border: Color,
+    /// Secondary panel fill: chat rows, active chat tab, panel rims.
+    pub panel_background: Color,
+    /// Text outline.
     pub fill_border: Color,
 
     pub stat_regen: Color,
@@ -107,8 +104,6 @@ pub struct DiepTheme {
     pub map_outside: Color,
     pub fallen_boss: Color,
 
-    pub scoreboard_row: Color,
-    pub scoreboard_row_border: Color,
     pub scoreboard_title: Color,
     pub scoreboard_text: Color,
 }
@@ -135,25 +130,22 @@ impl DiepTheme {
             minimap_border: [0.078, 0.078, 0.078, 1.0],
             minimap_background: [0.157, 0.157, 0.157, 1.0],
 
-            bar_background: [0.130, 0.130, 0.130, 0.85],
-            scoreboard_row: [0.130, 0.130, 0.130, 0.85],
-            scoreboard_row_border: [0.040, 0.040, 0.040, 0.90],
+            bar_background: [0.130, 0.130, 0.130, 0.88],
+            bar_border: [0.040, 0.040, 0.040, 0.95],
+            panel_background: [0.200, 0.200, 0.200, 0.85],
             scoreboard_title: [1.0, 1.0, 1.0, 1.0],
             scoreboard_text: [1.0, 1.0, 1.0, 1.0],
             score_text: [0.900, 0.920, 0.950, 1.0],
             fill_border: [0.0, 0.0, 0.0, 1.0],
 
-            tank_body: TANK_BODY,
-            tank_outline: TANK_OUTLINE,
             barrel: BARREL_FILL,
-            barrel_outline: BARREL_EDGE,
-            bullet: TANK_BODY,
-            team_blue: TANK_BODY,
+            team_blue: PLAYER_BLUE,
             team_red: TEAM_RED,
             team_purple: TEAM_PURPLE,
             team_green: TEAM_GREEN,
-            health_bar_background: HEALTH_BG,
+            health_bar_background: [0.240, 0.240, 0.240, 1.0],
             health_bar_foreground: HEALTH_FG,
+            health_bar_border: HEALTH_RIM,
             xp_bar_fill: XP_FILL,
             score_bar_fill: TEAM_GREEN,
             square: SQUARE,
@@ -187,25 +179,22 @@ impl DiepTheme {
             minimap_background: [0.804, 0.804, 0.804, 0.90],
             minimap_border: [0.733, 0.733, 0.733, 1.0],
 
-            bar_background: [0.310, 0.310, 0.310, 0.85],
-            scoreboard_row: [0.310, 0.310, 0.310, 0.85],
-            scoreboard_row_border: [0.180, 0.180, 0.180, 0.90],
+            bar_background: [0.240, 0.240, 0.240, 0.88],
+            bar_border: [0.100, 0.100, 0.100, 0.95],
+            panel_background: [0.330, 0.330, 0.330, 0.85],
             scoreboard_title: [1.0, 1.0, 1.0, 1.0],
             scoreboard_text: [1.0, 1.0, 1.0, 1.0],
             score_text: [0.0, 0.0, 0.0, 1.0],
             fill_border: [0.0, 0.0, 0.0, 1.0],
 
-            tank_body: TANK_BODY,
-            tank_outline: TANK_OUTLINE,
             barrel: BARREL_FILL,
-            barrel_outline: BARREL_EDGE,
-            bullet: TANK_BODY,
-            team_blue: TANK_BODY,
+            team_blue: PLAYER_BLUE,
             team_red: TEAM_RED,
             team_purple: TEAM_PURPLE,
             team_green: TEAM_GREEN,
             health_bar_background: HEALTH_BG,
             health_bar_foreground: HEALTH_FG,
+            health_bar_border: HEALTH_RIM,
             xp_bar_fill: XP_FILL,
             score_bar_fill: TEAM_GREEN,
             square: SQUARE,
@@ -226,24 +215,35 @@ impl DiepTheme {
         }
     }
 
-    pub const fn active() -> DiepTheme {
-        if LIGHT_MODE {
-            DiepTheme::light()
-        } else {
-            DiepTheme::dark()
-        }
+}
+
+static DARK: DiepTheme = DiepTheme::dark();
+static LIGHT: DiepTheme = DiepTheme::light();
+static LIGHT_MODE: AtomicBool = AtomicBool::new(false);
+
+/// The theme picked in the menu. Read it every frame; it can change while playing.
+#[inline]
+pub fn theme() -> &'static DiepTheme {
+    if LIGHT_MODE.load(Ordering::Relaxed) {
+        &LIGHT
+    } else {
+        &DARK
     }
 }
 
-pub const PLAYER_BLUE: Color = [0.22, 0.55, 0.98, 1.0];
+pub fn set_light_mode(light: bool) {
+    LIGHT_MODE.store(light, Ordering::Relaxed);
+}
 
 pub fn team_color(team: u8) -> Color {
+    let t = theme();
+
     match team {
-        0 => PLAYER_BLUE,
-        1 => TEAM_RED,
-        2 => TEAM_GREEN,
-        3 => TEAM_PURPLE,
-        _ => FALLEN,
+        0 => t.team_blue,
+        1 => t.team_red,
+        2 => t.team_green,
+        3 => t.team_purple,
+        _ => t.fallen_boss,
     }
 }
 
@@ -251,13 +251,8 @@ pub fn entity_color(team: u8, is_mine: bool) -> Color {
     if team != NO_TEAM {
         team_color(team)
     } else if is_mine {
-        PLAYER_BLUE
+        theme().team_blue
     } else {
-        TEAM_RED
+        theme().team_red
     }
 }
-
-pub const LIGHT_MODE: bool = true;
-
-pub const DARK_THEME: DiepTheme = DiepTheme::active();
-pub const DEFAULT_THEME: DiepTheme = DiepTheme::active();

@@ -1,6 +1,8 @@
 server/server_key.bin
 client/public_key.bin
 
+userscript
+
 target/debug
 target/flycheck0
 target/wasm-bindgen

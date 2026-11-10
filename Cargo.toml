@@ -1,10 +1,7 @@
 [workspace]
-members = ["server", "client", "shared", "tt"]
+members = ["server", "client", "shared"]
 resolver = "3"
-
-# package.authors = ["Gurmehar Singh"]
-# package.github = "https://github.com/gurmehar-singh-2009/nara.io"
-# package.license-file = "LICENSE.md"
+license-file = "LICENSE.md"
 
 [workspace.dependencies]
 bytes = { version = "1.12.1", features = ["serde"] }

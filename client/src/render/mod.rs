@@ -7,4 +7,5 @@ pub mod minimap;
 pub mod renderer;
 pub mod scoreboard;
 pub mod tank_upgrades;
+pub mod text;
 pub mod upgrade_panel;

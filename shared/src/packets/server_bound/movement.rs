@@ -1,3 +1,6 @@
+//! Movement packet.
+//! This allows you to move in game.
+
 use bitcode::{Decode, Encode};
 
 use crate::junk_packet;

@@ -1,10 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use glam::Vec2;
-use glyphon::{
-    Attrs, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache, TextArea,
-    TextAtlas, TextBounds, TextRenderer, Viewport, cosmic_text::Weight,
-};
+use cosmic_text::{Attrs, Family, FontSystem, Metrics, Shaping, Weight};
 use shared::packets::{NO_TEAM, camera_zoom};
 use wasm_bindgen::{JsCast, closure::Closure, prelude::*};
 use wasm_bindgen_futures::spawn_local;
@@ -33,11 +30,12 @@ use crate::{
         buffers::{CameraUniform, EntityInstance},
         camera::{CameraController, SpringPos},
         chat::ChatPanel,
-        colours::{DARK_THEME, team_color, to_glyphon, with_alpha},
+        colours::{Color, set_light_mode, team_color, theme, with_alpha},
         death_screen::DeathScreen,
         minimap,
         scoreboard::{Scoreboard, pill_instance, rounded_ui_instance},
         tank_upgrades::{TankUpgradePanel, default_classes},
+        text::{Layer, TextArea, TextBounds, TextRenderer},
         upgrade_panel::UpgradePanel,
     },
     structs::game_state::GameState,
@@ -67,8 +65,6 @@ const LEVEL_BAR_BOTTOM: f32 = 34.0;
 const SCORE_TEXT_OUTLINE_PX: f32 = 2.0;
 const HUD_BAR_SPEED: f32 = 8.0;
 const HUD_BAR_OUTLINE: f32 = 3.0;
-const HUD_BAR_TRACK: [f32; 4] = [0.2, 0.2, 0.2, 0.85];
-const HUD_BAR_EDGE: [f32; 4] = [0.08, 0.08, 0.08, 0.95];
 const NAME_LABEL_FONT: f32 = 24.0;
 const NAME_LABEL_LINE: f32 = 28.0;
 const NAME_LABEL_GAP: f32 = 6.0;
@@ -79,17 +75,6 @@ const HEALTH_BAR_FADE_SPEED: f32 = 10.0;
 const LEVEL_BAR_H: f32 = 30.0;
 const LEVEL_BAR_GAP: f32 = 6.0;
 
-const OUTLINE_DIRS: [(f32, f32); 8] = [
-    (1.0, 0.0),
-    (-1.0, 0.0),
-    (0.0, 1.0),
-    (0.0, -1.0),
-    (1.0, 1.0),
-    (1.0, -1.0),
-    (-1.0, 1.0),
-    (-1.0, -1.0),
-];
-
 const NOTICE_TIME: f32 = 2.5;
 const NOTICE_FADE: f32 = 0.4;
 const NOTICE_TOP: f32 = 16.0;
@@ -99,7 +84,7 @@ const NOTICE_SLIDE_SPEED: f32 = 14.0;
 const MAX_NOTICES: usize = 4;
 
 struct Notice {
-    buffer: glyphon::Buffer,
+    buffer: cosmic_text::Buffer,
     time: f32,
     y: f32,
 }
@@ -126,7 +111,7 @@ impl Notices {
     }
 
     fn push(&mut self, fs: &mut FontSystem, text: &str) {
-        let mut buffer = glyphon::Buffer::new(fs, Metrics::new(20.0, 24.0));
+        let mut buffer = cosmic_text::Buffer::new(fs, Metrics::new(20.0, 24.0));
 
         buffer.set_text(text, &bold_attrs(), Shaping::Basic, None);
 
@@ -171,7 +156,7 @@ struct HudLayout {
 #[allow(clippy::too_many_arguments)]
 fn push_centered_text<'a>(
     areas: &mut Vec<TextArea<'a>>,
-    buffer: &'a glyphon::Buffer,
+    buffer: &'a cosmic_text::Buffer,
     cx: f32,
     cy: f32,
     outline_px: f32,
@@ -181,30 +166,29 @@ fn push_centered_text<'a>(
 ) {
     let (w, h) = Renderer::text_dimensions(buffer);
 
-    let left = cx - w * 0.5;
-    let top = cy - h * 0.5;
-
-    for (dx, dy) in OUTLINE_DIRS {
-        areas.push(TextArea {
-            buffer,
-            left: left + dx * outline_px,
-            top: top + dy * outline_px,
-            scale: 1.0,
-            bounds,
-            default_color: outline,
-            custom_glyphs: &[],
-        });
-    }
-
     areas.push(TextArea {
         buffer,
-        left,
-        top,
+        left: cx - w * 0.5,
+        top: cy - h * 0.5,
         scale: 1.0,
         bounds,
-        default_color: fill,
-        custom_glyphs: &[],
+        color: fill,
+        outline,
+        outline_px,
     });
+}
+
+/// Same key the menu's theme toggle in index.html writes. Anything but "light" is dark,
+/// matching the menu's default.
+const THEME_STORAGE_KEY: &str = "diep10-theme";
+
+fn sync_theme_from_page() {
+    let light = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(THEME_STORAGE_KEY).ok().flatten())
+        .is_some_and(|v| v == "light");
+
+    set_light_mode(light);
 }
 
 fn bold_attrs() -> Attrs<'static> {
@@ -234,33 +218,29 @@ pub struct RenderState {
     scratch_instances: Vec<EntityInstance>,
 
     font_system: FontSystem,
-    swash_cache: SwashCache,
-    viewport: Viewport,
-    atlas: TextAtlas,
     text_renderer: TextRenderer,
-    world_text_renderer: TextRenderer,
-    text_buffer: glyphon::Buffer,
+    text_buffer: cosmic_text::Buffer,
 
     stats_text: String,
     last_stats_text: String,
-    score_bar_buffer: glyphon::Buffer,
+    score_bar_buffer: cosmic_text::Buffer,
     score_text: String,
     last_score_bar_text: String,
-    level_bar_buffer: glyphon::Buffer,
+    level_bar_buffer: cosmic_text::Buffer,
     level_text: String,
     last_level_text: String,
-    name_bar_buffer: glyphon::Buffer,
+    name_bar_buffer: cosmic_text::Buffer,
     name_text: String,
     last_name_text: String,
     score_fill: f32,
     level_fill: f32,
     show_debug: bool,
     notices: Notices,
-    net_buffers: Vec<glyphon::Buffer>,
+    net_buffers: Vec<cosmic_text::Buffer>,
     net_text: [String; 2],
     last_net_text: [String; 2],
     spectate_follow: SpringPos,
-    debug_buffer: glyphon::Buffer,
+    debug_buffer: cosmic_text::Buffer,
     debug_text: String,
     debug_dirty: bool,
     debug_text_changed: bool,
@@ -509,50 +489,15 @@ impl RenderState {
             .db_mut()
             .load_font_data(include_bytes!("../../assets/Exo2.ttf").to_vec());
 
-        let swash_cache = SwashCache::new();
-        let cache = Cache::new(&device);
+        let text_renderer = TextRenderer::new(&device, surface_format);
 
-        let mut atlas = TextAtlas::new(&device, &queue, &cache, surface_format);
-
-        let text_renderer = TextRenderer::new(
-            &mut atlas,
-            &device,
-            MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            None,
-        );
-
-        let world_text_renderer = TextRenderer::new(
-            &mut atlas,
-            &device,
-            MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            None,
-        );
-
-        let mut viewport = Viewport::new(&device, &cache);
-
-        viewport.update(
-            &queue,
-            Resolution {
-                width: physical_width,
-                height: physical_height,
-            },
-        );
-
-        let mut text_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(48.0, 56.0));
+        let mut text_buffer = cosmic_text::Buffer::new(&mut font_system, Metrics::new(48.0, 56.0));
 
         text_buffer.set_size(Some(physical_width as f32), Some(physical_height as f32));
 
         text_buffer.set_text(
             "son",
-            &Attrs::new().family(glyphon::Family::SansSerif),
+            &Attrs::new().family(Family::SansSerif),
             Shaping::Basic,
             None,
         );
@@ -565,14 +510,14 @@ impl RenderState {
         let class_panel = TankUpgradePanel::new(&mut font_system, default_classes());
         let death = DeathScreen::new(&mut font_system);
 
-        let mut score_bar_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(18.0, 22.0));
+        let mut score_bar_buffer = cosmic_text::Buffer::new(&mut font_system, Metrics::new(18.0, 22.0));
 
         score_bar_buffer.set_size(Some(physical_width as f32), Some(physical_height as f32));
 
         score_bar_buffer.set_text("", &bold_attrs(), Shaping::Basic, None);
         score_bar_buffer.shape_until_scroll(&mut font_system, false);
 
-        let mut level_bar_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(20.0, 24.0));
+        let mut level_bar_buffer = cosmic_text::Buffer::new(&mut font_system, Metrics::new(20.0, 24.0));
 
         level_bar_buffer.set_size(Some(physical_width as f32), Some(physical_height as f32));
 
@@ -580,23 +525,23 @@ impl RenderState {
         level_bar_buffer.shape_until_scroll(&mut font_system, false);
 
         let net_buffers = (0..2)
-            .map(|_| glyphon::Buffer::new(&mut font_system, Metrics::new(14.0, 18.0)))
+            .map(|_| cosmic_text::Buffer::new(&mut font_system, Metrics::new(14.0, 18.0)))
             .collect();
 
-        let mut name_bar_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(40.0, 46.0));
+        let mut name_bar_buffer = cosmic_text::Buffer::new(&mut font_system, Metrics::new(40.0, 46.0));
 
         name_bar_buffer.set_size(Some(physical_width as f32), Some(physical_height as f32));
 
         name_bar_buffer.set_text("", &bold_attrs(), Shaping::Basic, None);
         name_bar_buffer.shape_until_scroll(&mut font_system, false);
 
-        let mut debug_buffer = glyphon::Buffer::new(&mut font_system, Metrics::new(26.0, 30.0));
+        let mut debug_buffer = cosmic_text::Buffer::new(&mut font_system, Metrics::new(26.0, 30.0));
 
         debug_buffer.set_size(Some(physical_width as f32), Some(physical_height as f32));
 
         debug_buffer.set_text(
             "",
-            &Attrs::new().family(glyphon::Family::SansSerif),
+            &Attrs::new().family(Family::SansSerif),
             Shaping::Basic,
             None,
         );
@@ -621,11 +566,7 @@ impl RenderState {
             world_instances: 0,
             scratch_instances: Vec::with_capacity(1024),
             font_system,
-            swash_cache,
-            viewport,
-            atlas,
             text_renderer,
-            world_text_renderer,
             text_buffer,
             stats_text: String::with_capacity(64),
             last_stats_text: String::with_capacity(64),
@@ -693,9 +634,6 @@ impl RenderState {
 
         self.surface.configure(&self.device, &self.config);
         self.is_surface_configured = true;
-
-        self.viewport
-            .update(&self.queue, Resolution { width, height });
 
         self.text_buffer
             .set_size(Some(width as f32), Some(height as f32));
@@ -927,8 +865,8 @@ impl RenderState {
                         Vec2::new(left + w * 0.5, top + h * 0.5),
                         Vec2::new(w, h),
                         screen,
-                        with_alpha(DARK_THEME.bar_background, alpha),
-                        with_alpha(DARK_THEME.scoreboard_row_border, alpha),
+                        with_alpha(theme().bar_background, alpha),
+                        with_alpha(theme().bar_border, alpha),
                         3.0,
                         8.0,
                     ));
@@ -951,8 +889,8 @@ impl RenderState {
                     Vec2::new(screen_w * 0.5, notice.y),
                     Vec2::new(w + 32.0, NOTICE_H),
                     screen,
-                    with_alpha(DARK_THEME.bar_background, alpha),
-                    with_alpha(DARK_THEME.scoreboard_row_border, alpha),
+                    with_alpha(theme().bar_background, alpha),
+                    with_alpha(theme().bar_border, alpha),
                     3.0,
                     8.0,
                 ));
@@ -1009,7 +947,7 @@ impl RenderState {
         if mode == 0 && self.stats_text != self.last_stats_text {
             self.text_buffer.set_text(
                 &self.stats_text,
-                &Attrs::new().family(glyphon::Family::SansSerif),
+                &Attrs::new().family(Family::SansSerif),
                 Shaping::Basic,
                 None,
             );
@@ -1068,7 +1006,7 @@ impl RenderState {
         if mode == 0 && self.debug_text_changed {
             self.debug_buffer.set_text(
                 &self.debug_text,
-                &Attrs::new().family(glyphon::Family::SansSerif),
+                &Attrs::new().family(Family::SansSerif),
                 Shaping::Basic,
                 None,
             );
@@ -1084,7 +1022,7 @@ impl RenderState {
 
         if mode == 0 {
             let text_border_thickness = 3.0;
-            let text_border_color = to_glyphon(DARK_THEME.fill_border);
+            let text_border_color = theme().fill_border;
 
             let aspect_ratio = if screen_h > 0.0 {
                 screen_w / screen_h
@@ -1124,37 +1062,15 @@ impl RenderState {
                         bottom: self.config.height as i32,
                     };
 
-                    let outline = to_glyphon(with_alpha(DARK_THEME.fill_border, alpha));
-
-                    let fill = Color::rgba(
-                        text_comp.color.r(),
-                        text_comp.color.g(),
-                        text_comp.color.b(),
-                        (alpha * 255.0).round() as u8,
-                    );
-
-                    let thickness = (text_border_thickness * scale).max(2.0);
-
-                    for (dx, dy) in OUTLINE_DIRS {
-                        world_areas.push(TextArea {
-                            buffer: &text_comp.buffer,
-                            left: base_left + dx * thickness,
-                            top: base_top + dy * thickness,
-                            scale,
-                            bounds,
-                            default_color: outline,
-                            custom_glyphs: &[],
-                        });
-                    }
-
                     world_areas.push(TextArea {
                         buffer: &text_comp.buffer,
                         left: base_left,
                         top: base_top,
                         scale,
                         bounds,
-                        default_color: fill,
-                        custom_glyphs: &[],
+                        color: with_alpha(text_comp.color, alpha),
+                        outline: with_alpha(theme().fill_border, alpha),
+                        outline_px: (text_border_thickness * scale).max(2.0),
                     });
                 }
             }
@@ -1179,23 +1095,7 @@ impl RenderState {
                     bottom: (*top + *h - 4.0).round() as i32,
                 };
 
-                let alpha_u8 = ((*alpha).clamp(0.0, 1.0) * 255.0).round() as u8;
-
-                let fill = Color::rgba(255, 255, 255, alpha_u8);
-
-                let outline = to_glyphon(with_alpha(DARK_THEME.fill_border, *alpha));
-
-                for (dx, dy) in OUTLINE_DIRS {
-                    world_areas.push(TextArea {
-                        buffer: &bubble.body,
-                        left: *left + 8.0 + dx * 1.5,
-                        top: text_top + dy * 1.5,
-                        scale: 1.0,
-                        bounds,
-                        default_color: outline,
-                        custom_glyphs: &[],
-                    });
-                }
+                let alpha = (*alpha).clamp(0.0, 1.0);
 
                 world_areas.push(TextArea {
                     buffer: &bubble.body,
@@ -1203,8 +1103,9 @@ impl RenderState {
                     top: text_top,
                     scale: 1.0,
                     bounds,
-                    default_color: fill,
-                    custom_glyphs: &[],
+                    color: [1.0, 1.0, 1.0, alpha],
+                    outline: with_alpha(theme().fill_border, alpha),
+                    outline_px: 1.5,
                 });
             }
 
@@ -1215,7 +1116,7 @@ impl RenderState {
                 bottom: self.config.height as i32,
             };
 
-            let white = Color::rgb(255, 255, 255);
+            let white: Color = [1.0, 1.0, 1.0, 1.0];
             let hud = Renderer::hud_layout(screen);
 
             if show_hud {
@@ -1228,8 +1129,8 @@ impl RenderState {
                         hud.cx,
                         notice.y,
                         SCORE_TEXT_OUTLINE_PX,
-                        to_glyphon(with_alpha(DARK_THEME.fill_border, alpha)),
-                        Color::rgba(255, 255, 255, (alpha * 255.0) as u8),
+                        with_alpha(theme().fill_border, alpha),
+                        [1.0, 1.0, 1.0, alpha],
                         bounds,
                     );
                 }
@@ -1277,26 +1178,15 @@ impl RenderState {
 
                     net_bottom -= h;
 
-                    for (dx, dy) in OUTLINE_DIRS {
-                        text_areas.push(TextArea {
-                            buffer,
-                            left: net_right - w + dx * 1.5,
-                            top: net_bottom + dy * 1.5,
-                            scale: 1.0,
-                            bounds,
-                            default_color: text_border_color,
-                            custom_glyphs: &[],
-                        });
-                    }
-
                     text_areas.push(TextArea {
                         buffer,
                         left: net_right - w,
                         top: net_bottom,
                         scale: 1.0,
                         bounds,
-                        default_color: white,
-                        custom_glyphs: &[],
+                        color: white,
+                        outline: text_border_color,
+                        outline_px: 1.5,
                     });
                 }
             }
@@ -1308,8 +1198,9 @@ impl RenderState {
                     top: 20.0,
                     scale: 1.0,
                     bounds,
-                    default_color: white,
-                    custom_glyphs: &[],
+                    color: white,
+                    outline: text_border_color,
+                    outline_px: 0.0,
                 });
 
                 let (w, _) = Renderer::text_dimensions(&self.debug_buffer);
@@ -1317,26 +1208,15 @@ impl RenderState {
                 let left = screen_w - 20.0 - w;
                 let top = screen_h / 2.0;
 
-                for (dx, dy) in OUTLINE_DIRS {
-                    text_areas.push(TextArea {
-                        buffer: &self.debug_buffer,
-                        left: left + dx,
-                        top: top + dy,
-                        scale: 1.0,
-                        bounds,
-                        default_color: text_border_color,
-                        custom_glyphs: &[],
-                    });
-                }
-
                 text_areas.push(TextArea {
                     buffer: &self.debug_buffer,
                     left,
                     top,
                     scale: 1.0,
                     bounds,
-                    default_color: white,
-                    custom_glyphs: &[],
+                    color: white,
+                    outline: text_border_color,
+                    outline_px: 1.0,
                 });
             }
 
@@ -1346,24 +1226,13 @@ impl RenderState {
             text_areas.extend(class_areas);
             text_areas.extend(death_areas);
 
-            let _ = self.world_text_renderer.prepare(
+            self.text_renderer.prepare(
                 &self.device,
                 &self.queue,
                 &mut self.font_system,
-                &mut self.atlas,
-                &self.viewport,
-                world_areas,
-                &mut self.swash_cache,
-            );
-
-            let _ = self.text_renderer.prepare(
-                &self.device,
-                &self.queue,
-                &mut self.font_system,
-                &mut self.atlas,
-                &self.viewport,
-                text_areas,
-                &mut self.swash_cache,
+                (self.config.width, self.config.height),
+                &world_areas,
+                &text_areas,
             );
         }
 
@@ -1382,10 +1251,10 @@ impl RenderState {
                     depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: DARK_THEME.background[0] as f64,
-                            g: DARK_THEME.background[1] as f64,
-                            b: DARK_THEME.background[2] as f64,
-                            a: DARK_THEME.background[3] as f64,
+                            r: theme().background[0] as f64,
+                            g: theme().background[1] as f64,
+                            b: theme().background[2] as f64,
+                            a: theme().background[3] as f64,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -1406,9 +1275,7 @@ impl RenderState {
             }
 
             if mode == 0 {
-                self.world_text_renderer
-                    .render(&self.atlas, &self.viewport, &mut render_pass)
-                    .unwrap();
+                self.text_renderer.render(&mut render_pass, Layer::World);
             }
 
             if mode < 2 && world < self.num_instances {
@@ -1419,19 +1286,13 @@ impl RenderState {
             }
 
             if mode == 0 {
-                self.text_renderer
-                    .render(&self.atlas, &self.viewport, &mut render_pass)
-                    .unwrap();
+                self.text_renderer.render(&mut render_pass, Layer::Ui);
             }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
 
         self.queue.present(output);
-
-        if mode == 0 {
-            self.atlas.trim();
-        }
     }
 }
 
@@ -1520,6 +1381,26 @@ impl Renderer {
 
             let _ = canvas
                 .add_event_listener_with_callback("contextmenu", closure.as_ref().unchecked_ref());
+
+            self.browser_input_handlers.push(closure);
+        }
+
+        // The menu's theme toggle saves to localStorage in its own onchange handler, which runs
+        // before the event bubbles up to the document. "storage" covers other tabs.
+        sync_theme_from_page();
+
+        let theme_targets: [(&web_sys::EventTarget, &str); 2] =
+            [(&document, "change"), (&browser_window, "storage")];
+
+        for (target, name) in theme_targets {
+            let redraw_window = Arc::clone(&window);
+
+            let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+                sync_theme_from_page();
+                redraw_window.request_redraw();
+            });
+
+            let _ = target.add_event_listener_with_callback(name, closure.as_ref().unchecked_ref());
 
             self.browser_input_handlers.push(closure);
         }
@@ -1628,7 +1509,7 @@ impl Renderer {
         )
     }
 
-    fn text_dimensions(buffer: &glyphon::Buffer) -> (f32, f32) {
+    fn text_dimensions(buffer: &cosmic_text::Buffer) -> (f32, f32) {
         let mut width = 0.0f32;
         let mut height = 0.0f32;
 
@@ -2120,7 +2001,7 @@ impl Renderer {
 
         let map_bound = game.arena.bound;
 
-        let outside = DARK_THEME.map_outside;
+        let outside = theme().map_outside;
 
         let mut instances: Vec<RenderEntity<'a>> = Vec::with_capacity(
             64 + game.bullets.len() * 2 + game.shapes.len() * 3 + game.players.len() * 8,
@@ -2148,8 +2029,8 @@ impl Renderer {
                 rotation: 0.0,
                 shape_type: 2,
                 sides: 0,
-                fill_color: DARK_THEME.background,
-                border_color: DARK_THEME.grid,
+                fill_color: theme().background,
+                border_color: theme().grid,
                 border_thickness: 2.0,
                 extra_param: 64.0,
             },
@@ -2166,7 +2047,7 @@ impl Renderer {
             }
 
             let tint = if z.team == NO_TEAM {
-                DARK_THEME.fallen_boss
+                theme().fallen_boss
             } else {
                 team_color(z.team)
             };
@@ -2259,9 +2140,9 @@ impl Renderer {
                         rotation: 0.0,
                         shape_type: 4,
                         sides: 4,
-                        fill_color: with_alpha(DARK_THEME.health_bar_background, bar_alpha),
+                        fill_color: with_alpha(theme().health_bar_background, bar_alpha),
                         border_color: with_alpha(
-                            DARK_THEME.outline_for(DARK_THEME.health_bar_background),
+                            theme().outline_for(theme().health_bar_background),
                             bar_alpha,
                         ),
                         border_thickness: 0.0,
@@ -2278,9 +2159,9 @@ impl Renderer {
                             rotation: 0.0,
                             shape_type: 4,
                             sides: 4,
-                            fill_color: with_alpha(DARK_THEME.health_bar_foreground, bar_alpha),
+                            fill_color: with_alpha(theme().health_bar_foreground, bar_alpha),
                             border_color: with_alpha(
-                                DARK_THEME.outline_for(DARK_THEME.health_bar_foreground),
+                                theme().health_bar_border,
                                 bar_alpha,
                             ),
                             border_thickness: HEALTH_BAR_BORDER,
@@ -2306,8 +2187,8 @@ impl Renderer {
                     rotation: 0.0,
                     shape_type: 1,
                     sides: 4,
-                    fill_color: DARK_THEME.maze_walls,
-                    border_color: DARK_THEME.outline_for(DARK_THEME.maze_walls),
+                    fill_color: theme().maze_walls,
+                    border_color: theme().outline_for(theme().maze_walls),
                     border_thickness: WALL_BORDER,
                     extra_param: 1.0,
                 },
@@ -2365,9 +2246,9 @@ impl Renderer {
                         rotation: 0.0,
                         shape_type: 4,
                         sides: 4,
-                        fill_color: with_alpha(DARK_THEME.health_bar_background, bar_alpha),
+                        fill_color: with_alpha(theme().health_bar_background, bar_alpha),
                         border_color: with_alpha(
-                            DARK_THEME.outline_for(DARK_THEME.health_bar_background),
+                            theme().outline_for(theme().health_bar_background),
                             bar_alpha,
                         ),
                         border_thickness: 0.0,
@@ -2384,9 +2265,9 @@ impl Renderer {
                             rotation: 0.0,
                             shape_type: 4,
                             sides: 4,
-                            fill_color: with_alpha(DARK_THEME.health_bar_foreground, bar_alpha),
+                            fill_color: with_alpha(theme().health_bar_foreground, bar_alpha),
                             border_color: with_alpha(
-                                DARK_THEME.outline_for(DARK_THEME.health_bar_foreground),
+                                theme().health_bar_border,
                                 bar_alpha,
                             ),
                             border_thickness: HEALTH_BAR_BORDER,
@@ -2455,14 +2336,14 @@ impl Renderer {
                 SCORE_BAR_H,
                 hud.score_cy,
                 state.score_fill,
-                DARK_THEME.score_bar_fill,
+                theme().score_bar_fill,
             ),
             (
                 hud.level_w,
                 LEVEL_BAR_H,
                 hud.level_cy,
                 state.level_fill,
-                DARK_THEME.xp_bar_fill,
+                theme().xp_bar_fill,
             ),
         ];
 
@@ -2474,8 +2355,8 @@ impl Renderer {
                     Vec2::new(hud.cx, cy),
                     Vec2::new(w, h),
                     screen,
-                    HUD_BAR_TRACK,
-                    HUD_BAR_EDGE,
+                    theme().bar_background,
+                    theme().bar_border,
                     HUD_BAR_OUTLINE,
                 ),
                 text: None,
@@ -3247,7 +3128,7 @@ impl ApplicationHandler<RenderState> for Renderer {
                                     "render mode: {}",
                                     match state.debug_render_mode {
                                         0 => "0: full (entities + UI + text)",
-                                        1 => "1: no text (glyphon skipped)",
+                                        1 => "1: no text",
                                         _ => "2: present-only (nothing drawn)",
                                     }
                                 )
@@ -3327,7 +3208,7 @@ fn release_inputs(game: &mut GameState) {
 }
 
 pub struct TextComponent {
-    pub buffer: glyphon::Buffer,
+    pub buffer: cosmic_text::Buffer,
     pub color: Color,
     pub offset: [f32; 2],
     pub source_text: String,
@@ -3335,7 +3216,7 @@ pub struct TextComponent {
 
 impl TextComponent {
     pub fn new(font_system: &mut FontSystem, initial_text: &str) -> Self {
-        let mut buffer = glyphon::Buffer::new(font_system, Metrics::new(24.0, 28.0));
+        let mut buffer = cosmic_text::Buffer::new(font_system, Metrics::new(24.0, 28.0));
 
         buffer.set_text(initial_text, &bold_attrs(), Shaping::Basic, None);
 
@@ -3343,7 +3224,7 @@ impl TextComponent {
 
         Self {
             buffer,
-            color: Color::rgb(255, 255, 255),
+            color: [1.0, 1.0, 1.0, 1.0],
             offset: [0.0, 0.0],
             source_text: initial_text.to_string(),
         }

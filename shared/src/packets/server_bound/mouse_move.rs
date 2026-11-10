@@ -1,3 +1,6 @@
+//! Contains information about your mouse position and the screen dimensions.
+//! Used primarily for drones.
+
 use bitcode::{Decode, Encode};
 
 use crate::junk_packet;

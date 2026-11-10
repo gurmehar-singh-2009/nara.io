@@ -116,10 +116,10 @@ However, I did use it to debug certain sections of my code.
 Below is a list I will keep updated with what files I have used AI in:
 
 - /client/src/render/shader/fragment.wgsl - originally written myself, used ai to optimize it for bad devices.
-- /client/bin/ - Not technically in use, experimentation.
-
+- /client/src/render/shader/text.wgsl - AI was used to write the SDF shader (previously, we used 8 instances offsetted to mimic text borders, SDF should make it crispier).
 
 # Screenshots
+### THESE SCREENSHOTS ARE OUTDATED!
 ## Homescreen
 <img width="1920" height="937" alt="image" src="https://github.com/user-attachments/assets/e9a8bb48-dac9-4561-881a-24a86728237d" />
 <img width="1920" height="931" alt="image" src="https://github.com/user-attachments/assets/06827095-90b6-4dd1-a951-4ba5a03214b0" />

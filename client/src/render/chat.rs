@@ -1,39 +1,18 @@
-// so for chat:
-// im gonna make it so that theres a global and team chat
-// and chat messages ONLY show up in the chat log!! so no spamming
-// and use the `rustrict` crate for swear censoring and put rate limits to
-// chatting
-//
-// message layout (discord-ish header):
-//   [Blue] Name                       14:32
-//   message body, wrapped to the panel width
-// the team channel drops the tag (everyone there is on your team);
-// an empty sender is a system notice: dim, italic, no header.
-//
-// animations: messages slide in from the left, the panel fades in and
-// out, the input row grows open, the active-tab underline slides
-// between tabs, and a tab flashes when a message lands in the channel
-// you're not looking at.
-//
-// plus bubbles: each non-system message also floats above the sender's
-// tank for a few seconds (drawn by the renderer via `bubbles()`).
-
 use glam::Vec2;
-use glyphon::{
-    Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds,
-    cosmic_text::{Style, Weight},
-};
+use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Style, Weight};
 use shared::packets::NO_SENDER;
 
 use crate::{
     render::{
         buffers::EntityInstance,
-        colours::{DARK_THEME, to_glyphon, with_alpha},
+        colours::{theme, with_alpha},
         scoreboard::{bar_ui_instance, rounded_ui_instance},
+        text::{TextArea, TextBounds},
     },
     structs::game_state::ChatChannel,
 };
 
+// bunch of constants!
 const LEFT: f32 = 20.0;
 const TOP: f32 = 96.0;
 const WIDTH: f32 = 360.0;
@@ -89,20 +68,19 @@ const SYSTEM_COLOR: [f32; 4] = [0.72, 0.72, 0.76, 1.0];
 const TIME_COLOR: [f32; 4] = [0.85, 0.85, 0.85, 1.0];
 const HINT_COLOR: [f32; 4] = [0.75, 0.75, 0.78, 1.0];
 
+// Helper functions.
 fn bold() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif).weight(Weight::BOLD)
 }
-
 fn plain() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif)
 }
-
 fn italic() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif).style(Style::Italic)
 }
 
 fn make_buffer_attrs(
-    fs: &mut glyphon::FontSystem,
+    fs: &mut cosmic_text::FontSystem,
     metrics: Metrics,
     text: &str,
     attrs: &Attrs,
@@ -115,7 +93,7 @@ fn make_buffer_attrs(
     buffer
 }
 
-fn make_buffer(fs: &mut glyphon::FontSystem, metrics: Metrics, text: &str) -> Buffer {
+fn make_buffer(fs: &mut cosmic_text::FontSystem, metrics: Metrics, text: &str) -> Buffer {
     make_buffer_attrs(fs, metrics, text, &bold())
 }
 
@@ -154,10 +132,10 @@ fn channel_index(channel: ChatChannel) -> usize {
 /// team id -> tag text + tag color
 fn team_tag(team: u8) -> (&'static str, [f32; 4]) {
     match team {
-        0 => ("[Blue]", DARK_THEME.team_blue),
-        1 => ("[Red]", DARK_THEME.team_red),
-        2 => ("[Green]", DARK_THEME.team_green),
-        3 => ("[Purple]", DARK_THEME.team_purple),
+        0 => ("[Blue]", theme().team_blue),
+        1 => ("[Red]", theme().team_red),
+        2 => ("[Green]", theme().team_green),
+        3 => ("[Purple]", theme().team_purple),
         _ => ("[Team]", WHITE),
     }
 }
@@ -235,7 +213,7 @@ pub struct ChatPanel {
 }
 
 impl ChatPanel {
-    pub fn new(fs: &mut glyphon::FontSystem) -> Self {
+    pub fn new(fs: &mut cosmic_text::FontSystem) -> Self {
         Self {
             global: Vec::new(),
             team: Vec::new(),
@@ -287,7 +265,7 @@ impl ChatPanel {
         self.input_active = true;
     }
 
-    pub fn close_input(&mut self, fs: &mut glyphon::FontSystem) {
+    pub fn close_input(&mut self, fs: &mut cosmic_text::FontSystem) {
         if !self.input_active {
             return;
         }
@@ -298,12 +276,12 @@ impl ChatPanel {
         self.reshape_input(fs);
     }
 
-    pub fn backspace(&mut self, fs: &mut glyphon::FontSystem) {
+    pub fn backspace(&mut self, fs: &mut cosmic_text::FontSystem) {
         self.input.pop();
         self.reshape_input(fs);
     }
 
-    pub fn type_text(&mut self, fs: &mut glyphon::FontSystem, text: &str) {
+    pub fn type_text(&mut self, fs: &mut cosmic_text::FontSystem, text: &str) {
         for c in text.chars() {
             if (c as u32) < 0x20 {
                 continue;
@@ -319,7 +297,7 @@ impl ChatPanel {
         self.reshape_input(fs);
     }
 
-    pub fn submit(&mut self, fs: &mut glyphon::FontSystem) -> Option<String> {
+    pub fn submit(&mut self, fs: &mut cosmic_text::FontSystem) -> Option<String> {
         let msg = if self.input.is_empty() {
             None
         } else {
@@ -334,7 +312,7 @@ impl ChatPanel {
     /// server-echoed message: `sender` empty means a system notice
     pub fn receive(
         &mut self,
-        fs: &mut glyphon::FontSystem,
+        fs: &mut cosmic_text::FontSystem,
         channel: ChatChannel,
         team: u8,
         sender_id: u32,
@@ -509,7 +487,7 @@ impl ChatPanel {
         }
     }
 
-    fn reshape_input(&mut self, fs: &mut glyphon::FontSystem) {
+    fn reshape_input(&mut self, fs: &mut cosmic_text::FontSystem) {
         self.input_buffer
             .set_text(&self.input, &bold(), Shaping::Basic, None);
         self.input_buffer.shape_until_scroll(fs, false);
@@ -577,8 +555,8 @@ impl ChatPanel {
             Vec2::new(LEFT + WIDTH * 0.5, TOP + bg_h * 0.5),
             Vec2::new(WIDTH, bg_h),
             screen,
-            with_alpha(DARK_THEME.bar_background, alpha_p),
-            with_alpha(DARK_THEME.scoreboard_row, alpha_p),
+            with_alpha(theme().bar_background, alpha_p),
+            with_alpha(theme().panel_background, alpha_p),
             4.0,
             PANEL_RADIUS,
         ));
@@ -594,9 +572,9 @@ impl ChatPanel {
             let is_active = *channel == self.active;
 
             let fill = if is_active {
-                DARK_THEME.scoreboard_row
+                theme().panel_background
             } else {
-                mix(DARK_THEME.bar_background, WHITE, self.flash[i] * 0.4)
+                mix(theme().bar_background, WHITE, self.flash[i] * 0.4)
             };
 
             instances.push(bar_ui_instance(
@@ -708,7 +686,7 @@ impl ChatPanel {
                 Vec2::new(LEFT + WIDTH * 0.5, row_top + h * 0.5),
                 Vec2::new(WIDTH - 2.0 * PAD, h),
                 screen,
-                with_alpha(DARK_THEME.scoreboard_row, a),
+                with_alpha(theme().panel_background, a),
             ));
 
             let text_left = LEFT + PAD + 4.0;
@@ -776,39 +754,14 @@ fn push_outlined_color<'a>(
         right: screen.x as i32,
         bottom: screen.y as i32,
     };
-    let outline = to_glyphon(with_alpha(DARK_THEME.fill_border, color[3]));
-    let fill = to_glyphon(color);
-
-    const DIRS: [(f32, f32); 8] = [
-        (1.0, 0.0),
-        (-1.0, 0.0),
-        (0.0, 1.0),
-        (0.0, -1.0),
-        (1.0, 1.0),
-        (1.0, -1.0),
-        (-1.0, 1.0),
-        (-1.0, -1.0),
-    ];
-
-    for (dx, dy) in DIRS {
-        areas.push(TextArea {
-            buffer,
-            left: left + dx * TEXT_OUTLINE_PX,
-            top: top + dy * TEXT_OUTLINE_PX,
-            scale: 1.0,
-            bounds,
-            default_color: outline,
-            custom_glyphs: &[],
-        });
-    }
-
     areas.push(TextArea {
         buffer,
         left,
         top,
         scale: 1.0,
         bounds,
-        default_color: fill,
-        custom_glyphs: &[],
+        color,
+        outline: with_alpha(theme().fill_border, color[3]),
+        outline_px: TEXT_OUTLINE_PX,
     });
 }

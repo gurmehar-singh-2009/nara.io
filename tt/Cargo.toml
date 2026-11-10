@@ -1,7 +1,0 @@
-[package]
-name = "tt"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-mlua = { version = "0.12.0", features = ["lua55", "vendored"] }

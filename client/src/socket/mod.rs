@@ -11,8 +11,8 @@ use shared::packets::{
     PACKET_SEED, Packet, PlayerUpgradesPacket, StatUpgradePacket, TankSelectPacket, TankTreePacket,
     client_bound::{
         AddEntityPacket, ArenaPacket, DeathPacket, EntityType, LeaderboardPacket,
-        PlayerStatsPacket,
-        RemoveEntityPacket, ServerInfoPacket, SpectatePacket, TankInfoPacket, UpdateEntityPacket,
+        PlayerStatsPacket, RemoveEntityPacket, ServerInfoPacket, SpectatePacket, TankInfoPacket,
+        UpdateEntityPacket,
     },
     handshake::{HandShake, HandshakePacket},
     level_scale,
@@ -191,7 +191,8 @@ impl Socket {
                                     );
 
                                     if let Some(name) = pending_spawn.borrow_mut().take() {
-                                        if let Some(cipher) = send_cipher_for_reader.borrow().as_ref()
+                                        if let Some(cipher) =
+                                            send_cipher_for_reader.borrow().as_ref()
                                         {
                                             send_spawn(
                                                 cipher,

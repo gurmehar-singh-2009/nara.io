@@ -27,8 +27,8 @@ mod scripting;
 
 use paris::{error, info, log};
 
-// const TANK_TREE: std::sync::LazyLock<Vec<TankTree>> = std::sync::LazyLock::new(||
-// load_tank_tree());
+// const TANK_TREE: std::sync::LazyLock<Vec<TankTree>> =
+// std::sync::LazyLock::new(|| load_tank_tree());
 use crate::{
     entities::connections::Connections,
     errors::{LoadConfigSnafu, PortBindFailureSnafu, ServerError},

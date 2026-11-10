@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use glam::Vec2;
-use glyphon::{Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds, cosmic_text::Weight};
+use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, Weight};
 
 use crate::render::{
     buffers::EntityInstance,
-    colours::{DARK_THEME, PLAYER_BLUE, to_glyphon},
+    colours::theme,
+    text::{TextArea, TextBounds},
 };
 
 const RIGHT_MARGIN: f32 = 16.0;
@@ -18,8 +19,6 @@ const ROW_LINE_HEIGHT: f32 = 24.0;
 const TITLE_LINE_HEIGHT: f32 = 32.0;
 const TITLE_TO_ROWS: f32 = 8.0;
 const ROW_BORDER: f32 = 3.0;
-const ROW_TRACK: [f32; 4] = [0.33, 0.33, 0.33, 0.85];
-const ROW_OUTLINE: [f32; 4] = [0.2, 0.2, 0.2, 0.95];
 const ROW_OUTLINE_MINE: [f32; 4] = [0.95, 0.95, 0.95, 0.95];
 const MAX_ROWS: usize = 10;
 
@@ -36,7 +35,7 @@ fn bold() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif).weight(Weight::BOLD)
 }
 
-fn make_buffer(fs: &mut glyphon::FontSystem, metrics: Metrics, text: &str) -> Buffer {
+fn make_buffer(fs: &mut cosmic_text::FontSystem, metrics: Metrics, text: &str) -> Buffer {
     let mut buffer = Buffer::new(fs, metrics);
     buffer.set_text(text, &bold(), Shaping::Basic, None);
     buffer.shape_until_scroll(fs, false);
@@ -105,7 +104,7 @@ pub(crate) fn bar_ui_instance(
         screen,
         5,
         fill,
-        DARK_THEME.scoreboard_row,
+        theme().panel_background,
         4.0,
     )
 }
@@ -153,14 +152,14 @@ pub struct Scoreboard {
 impl Scoreboard {
     const MAX_RESHAPES_PER_FRAME: usize = 2;
 
-    pub fn new(fs: &mut glyphon::FontSystem) -> Self {
+    pub fn new(fs: &mut cosmic_text::FontSystem) -> Self {
         Self {
             title: make_buffer(fs, Metrics::new(32.0, 32.0), "Scoreboard"),
             rows: Vec::new(),
         }
     }
 
-    pub fn sync(&mut self, fs: &mut glyphon::FontSystem, entries: &[(String, u32)]) {
+    pub fn sync(&mut self, fs: &mut cosmic_text::FontSystem, entries: &[(String, u32)]) {
         let entries = &entries[..entries.len().min(MAX_ROWS)];
         let top = entries.iter().map(|e| e.1).max().unwrap_or(1).max(1) as f32;
 
@@ -216,7 +215,7 @@ impl Scoreboard {
             .collect();
     }
 
-    pub fn tick(&mut self, fs: &mut glyphon::FontSystem, dt: f32) {
+    pub fn tick(&mut self, fs: &mut cosmic_text::FontSystem, dt: f32) {
         let t = 1.0 - (-ANIM_SPEED * dt).exp();
         let mut reshapes = 0;
 
@@ -256,7 +255,7 @@ impl Scoreboard {
     ) -> (Vec<EntityInstance>, Vec<TextArea<'_>>) {
         let mut instances = Vec::new();
         let mut areas = Vec::new();
-        let theme = &DARK_THEME;
+        let theme = theme();
 
         let right = screen.x - RIGHT_MARGIN;
         let left = right - ROW_WIDTH;
@@ -280,7 +279,7 @@ impl Scoreboard {
 
             let mine = me.is_some_and(|me| me == row.name);
             let fill = if mine {
-                PLAYER_BLUE
+                theme.team_blue
             } else {
                 theme.health_bar_foreground
             };
@@ -289,8 +288,8 @@ impl Scoreboard {
                 Vec2::new(center_x, center_y),
                 Vec2::new(ROW_WIDTH, ROW_HEIGHT),
                 screen,
-                ROW_TRACK,
-                if mine { ROW_OUTLINE_MINE } else { ROW_OUTLINE },
+                theme.bar_background,
+                if mine { ROW_OUTLINE_MINE } else { theme.bar_border },
                 ROW_BORDER,
             ));
 
@@ -340,37 +339,14 @@ fn push_text<'a>(
         right: screen.x as i32,
         bottom: screen.y as i32,
     };
-    let outline_color = to_glyphon(DARK_THEME.fill_border);
-
-    const DIRS: [(f32, f32); 8] = [
-        (1.0, 0.0),
-        (-1.0, 0.0),
-        (0.0, 1.0),
-        (0.0, -1.0),
-        (1.0, 1.0),
-        (1.0, -1.0),
-        (-1.0, 1.0),
-        (-1.0, -1.0),
-    ];
-    for (dx, dy) in DIRS {
-        areas.push(TextArea {
-            buffer,
-            left: left + dx * outline_px,
-            top: top + dy * outline_px,
-            scale: 1.0,
-            bounds,
-            default_color: outline_color,
-            custom_glyphs: &[],
-        });
-    }
-
     areas.push(TextArea {
         buffer,
         left,
         top,
         scale: 1.0,
         bounds,
-        default_color: to_glyphon(color),
-        custom_glyphs: &[],
+        color,
+        outline: theme().fill_border,
+        outline_px,
     });
 }

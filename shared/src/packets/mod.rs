@@ -36,8 +36,10 @@ pub const KILLER_TRIANGLE: u8 = 2;
 pub const KILLER_PENTAGON: u8 = 3;
 pub const KILLER_ARENA: u8 = u8::MAX;
 
+/// Zooms out at the same rate the tank grows (`level_scale`), so your tank keeps the same
+/// on-screen size and the view widens with it.
 pub fn camera_zoom(level: u32, field_factor: f32) -> f32 {
-    BASE_ZOOM * field_factor.max(0.1) / 1.01f32.powf(level.saturating_sub(1) as f32 * 0.5)
+    BASE_ZOOM * field_factor.max(0.1) / level_scale(level)
 }
 
 pub fn cursor_world_offset(
@@ -63,11 +65,11 @@ pub fn level_scale(level: u32) -> f32 {
 }
 
 const fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     let mut i = 0;
     while i < bytes.len() {
         hash ^= bytes[i] as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
         i += 1;
     }
     hash

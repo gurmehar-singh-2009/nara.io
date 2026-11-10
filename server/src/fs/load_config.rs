@@ -148,6 +148,7 @@ config_sections! {
     },
 
     DroneConfig {
+        size_mult: f32,
         speed_mult: f32,
         speed_per_stat: f32,
         drag: f32,

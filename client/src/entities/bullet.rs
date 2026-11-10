@@ -2,7 +2,7 @@ use crate::{
     entities::Entity,
     render::{
         buffers::EntityInstance,
-        colours::{DARK_THEME, entity_color, with_alpha},
+        colours::{theme, entity_color, with_alpha},
     },
 };
 
@@ -11,28 +11,56 @@ const FADE_OUT: f32 = 0.25;
 const DEATH_GROWTH: f32 = 0.5;
 const TRAP_SCALE: f32 = 1.6;
 
+/// Represents a bullet in the game for the client.
 pub struct Bullet {
+    /// The ID of the bullet.
     pub id: u32,
+    /// The position of the bullet.
     pub pos: glam::Vec2,
+    /// The previous position of the bullet.
     pub last_pos: glam::Vec2,
+    /// The render position of the bullet. This is the interpolated value from
+    /// `last_pos` to `pos`.
     pub render_pos: glam::Vec2,
+    /// The bullet velocity.
     pub vel: glam::Vec2,
+    /// The bullet rotation.
     pub rot: f32,
+    /// The previous bullet rotation.
     pub last_rot: f32,
+    /// The render rotation. This is the interpolated value from `last_rot` to
+    /// `rot`.
     pub render_rot: f32,
+    /// The time the last update occured.
     pub last_update_time: f64,
+    /// The radius of the bullet.
     pub radius: f32,
+    /// The recoil of the parent barrel.
     pub recoil: u32,
+    /// Whether or not this bullet is mine.
     pub is_mine: bool,
+    /// Which team this bullet belongs to.
     pub team: u8,
+    /// Whether or not this a newly encountered bullet.
     pub is_new: bool,
+    /// Whether or not this is a trap.
     pub trap: bool,
+    /// Whether or not this is a dead bullet.
     pub dead: bool,
+    /// Whether or not this bullet is in it's dying stage. Used for fade
+    /// animation.
     pub dying: bool,
+    /// The render opacity of the bullet. Used for the death/spawn animation.
     pub render_alpha: f32,
 }
 
 impl Bullet {
+    /// Creates a new `Bullet`.
+    ///
+    /// # Arguments
+    /// + `id` - the bullet ID.
+    /// + `x` - the x-coordinate.
+    /// + `y` - the y-coordinate.
     pub fn new(id: u32, x: f32, y: f32) -> Self {
         let pos = glam::Vec2::new(x, y);
         Self {
@@ -57,6 +85,10 @@ impl Bullet {
         }
     }
 
+    /// Advances the bullet animation.
+    ///
+    /// # Arguments
+    /// + `dt` - the delta time (between frames, in milliseconds).
     pub fn tick(&mut self, dt: f32) {
         if self.dying {
             let drift = self.vel * dt;
@@ -71,6 +103,7 @@ impl Bullet {
 }
 
 impl Entity for Bullet {
+    /// Returns the render instance for a `Bullet`.
     fn get_render_instances(&self) -> Vec<EntityInstance> {
         let pop = if self.dying {
             1.0 + (1.0 - self.render_alpha) * DEATH_GROWTH
@@ -80,7 +113,7 @@ impl Entity for Bullet {
         let diameter = self.radius * 2.0 * pop;
 
         let fill = entity_color(self.team, self.is_mine);
-        let outline = DARK_THEME.outline_for(fill);
+        let outline = theme().outline_for(fill);
 
         let (size, shape_type, sides) = if self.trap {
             (diameter * TRAP_SCALE, 3, 3)

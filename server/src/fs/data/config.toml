@@ -129,6 +129,9 @@ max_travel = 4.0
 death_cam = 3.0
 
 [drone]
+# drone radius = barrel width / 2 * size_mult. 1.6 makes the triangle about as wide as the
+# narrow end of the spawner, so drones fill its mouth.
+size_mult = 1.6
 speed_mult = 1.6
 speed_per_stat = 0.15
 drag = 2.634

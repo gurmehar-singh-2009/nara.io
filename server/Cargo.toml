@@ -1,7 +1,12 @@
 [package]
 name = "server"
-version = "0.1.0"
+description = "server for nara.io"
+version = "1.0.0"
 edition = "2024"
+license-file = "LICENSE.md"
+repository = "https://github.com/gurmehar-singh-2009/nara.io"
+keywords = ["nara.io", "diep.io clone", "arras.io clone", "havre.io clone"]
+categories = ["game", "webgame", "diep.io"]
 
 [dependencies]
 bytes = { workspace = true }
@@ -39,3 +44,6 @@ rustls = { version = "0.23", features = ["aws_lc_rs"] }
 [build-dependencies]
 ed25519-dalek = { workspace = true }
 getrandom = { version = "0.4.3", features = ["sys_rng"] }
+
+[lints]
+workspace = true
