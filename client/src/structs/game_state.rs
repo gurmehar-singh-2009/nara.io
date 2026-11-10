@@ -134,6 +134,8 @@ pub struct GameState {
     pub tank_info: TankInfo,
 
     pub ping_ms: Option<f32>,
+    /// Movement values for predicting our own tank, from the server's player stats.
+    pub move_params: shared::physics::MoveParams,
     pub server_load: f32,
     pub server_players: u32,
     pub server_bots: u32,

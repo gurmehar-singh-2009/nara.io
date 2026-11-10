@@ -302,6 +302,18 @@
                 z-index: 20;
             }
 
+            #ingameOptions {
+                display: none;
+                position: fixed;
+                top: 8px;
+                left: 8px;
+                z-index: 30;
+            }
+
+            body.playing #ingameOptions {
+                display: flex;
+            }
+
             .discord-btn {
                 background: #3a3a3a;
                 border: 1px solid #5a5a5a;
@@ -856,6 +868,17 @@
         <div class="screen-overlay"></div>
         <canvas id="gameCanvas"></canvas>
 
+        <!-- Options button while playing -->
+        <button
+            id="ingameOptions"
+            onclick="openDrawer()"
+            class="top-btn items-center gap-1.5"
+            title="Options"
+        >
+            <i class="fa-solid fa-gear text-xs text-gray-300"></i>
+            <span>Options</span>
+        </button>
+
         <!-- Side Menu Drawer Overlay -->
         <div
             id="drawerOverlay"
@@ -903,6 +926,26 @@
                         </span>
                     </label>
 
+                    <!-- Grid Toggle -->
+                    <label
+                        class="flex items-center justify-between cursor-pointer p-2 bg-[#3a3a3a] border border-gray-600 rounded-md"
+                    >
+                        <span
+                            class="text-gray-200 font-bold flex items-center gap-2"
+                        >
+                            <i class="fa-solid fa-border-all text-sm"></i> Show Grid
+                        </span>
+                        <span class="diep-switch">
+                            <input
+                                type="checkbox"
+                                id="gridToggle"
+                                checked
+                                onchange="toggleGrid()"
+                            />
+                            <span class="diep-slider"></span>
+                        </span>
+                    </label>
+
                     <div>
                         <label
                             class="block text-gray-400 mb-1 font-extrabold uppercase tracking-wider text-[10px]"
@@ -919,10 +962,11 @@
                             <option value="webgl2" selected>
                                 WebGL 2.0 (Standard)
                             </option>
-                            <option value="canvas2d">
-                                Canvas 2D (Compatibility Mode)
-                            </option>
                         </select>
+                        <p class="text-gray-500 font-semibold text-[10px] mt-1">
+                            Switching reloads the game. Falls back to WebGL 2.0 if WebGPU
+                            isn't supported.
+                        </p>
                     </div>
 
                     <div class="notice-box space-y-1.5">
@@ -933,24 +977,24 @@
                             <span
                                 id="rendererBadge"
                                 class="bg-gray-700 border border-gray-500 px-1.5 py-0.5 rounded text-[9px] font-bold text-gray-200"
-                                >WebGL 2.0</span
+                                >--</span
                             >
                         </div>
                         <div class="flex justify-between text-gray-300">
-                            <span>Target FPS:</span>
+                            <span>FPS:</span>
                             <span
                                 id="fpsCounter"
                                 class="text-emerald-400 font-mono"
-                                >60.0 FPS</span
+                                >--</span
                             >
                         </div>
                         <div class="flex justify-between text-gray-300">
                             <span>Memory Usage:</span>
-                            <span class="text-blue-400 font-mono">14.2 MB</span>
+                            <span id="memoryStat" class="text-blue-400 font-mono">--</span>
                         </div>
                         <div class="flex justify-between text-gray-300">
                             <span>Latency:</span>
-                            <span class="text-amber-400 font-mono">12 ms</span>
+                            <span id="latencyStat" class="text-amber-400 font-mono">--</span>
                         </div>
                     </div>
 
@@ -962,7 +1006,12 @@
                                 >Show FPS Counter</span
                             >
                             <span class="diep-switch">
-                                <input type="checkbox" checked />
+                                <input
+                                    type="checkbox"
+                                    id="fpsToggle"
+                                    checked
+                                    onchange="saveSwitch('fpsToggle', FPS_KEY)"
+                                />
                                 <span class="diep-slider"></span>
                             </span>
                         </label>
@@ -974,7 +1023,12 @@
                                 >Hardware Acceleration</span
                             >
                             <span class="diep-switch">
-                                <input type="checkbox" checked />
+                                <input
+                                    type="checkbox"
+                                    id="hwAccelToggle"
+                                    checked
+                                    onchange="toggleHardwareAcceleration()"
+                                />
                                 <span class="diep-slider"></span>
                             </span>
                         </label>
@@ -986,7 +1040,11 @@
                                 >Low Detail Mode</span
                             >
                             <span class="diep-switch">
-                                <input type="checkbox" />
+                                <input
+                                    type="checkbox"
+                                    id="lowDetailToggle"
+                                    onchange="saveSwitch('lowDetailToggle', LOW_DETAIL_KEY)"
+                                />
                                 <span class="diep-slider"></span>
                             </span>
                         </label>
@@ -1395,14 +1453,72 @@
                     .classList.remove("active");
             }
 
+            // The game reads these keys from localStorage (client/src/render/settings.rs).
+            const RENDERER_KEY = "nara.renderer";
+            const GRID_KEY = "nara.grid";
+            const FPS_KEY = "nara.fps";
+            const LOW_DETAIL_KEY = "nara.lowdetail";
+            const HW_ACCEL_KEY = "nara.hwaccel";
+
+            // on/off switches the game picks up live (it re-reads settings on any change)
+            function saveSwitch(id, key) {
+                localStorage.setItem(
+                    key,
+                    document.getElementById(id).checked ? "on" : "off",
+                );
+            }
+
+            // GPU power preference is chosen when the game starts, so this reloads.
+            function toggleHardwareAcceleration() {
+                const toggle = document.getElementById("hwAccelToggle");
+                if (
+                    document.body.classList.contains("playing") &&
+                    !confirm("Changing this reloads the game. Continue?")
+                ) {
+                    toggle.checked = !toggle.checked;
+                    return;
+                }
+                saveSwitch("hwAccelToggle", HW_ACCEL_KEY);
+                location.reload();
+            }
+
             function updateRendererSetting() {
                 const select = document.getElementById("rendererSelect");
-                const badge = document.getElementById("rendererBadge");
-                if (select && badge) {
-                    const text = select.options[select.selectedIndex].text;
-                    badge.innerText = text.split(" ")[0];
+                const previous = localStorage.getItem(RENDERER_KEY) || "webgl2";
+                if (select.value === previous) return;
+
+                // A canvas can't switch graphics APIs once it has a context, so reload.
+                if (
+                    document.body.classList.contains("playing") &&
+                    !confirm("Switching renderer reloads the game. Continue?")
+                ) {
+                    select.value = previous;
+                    return;
                 }
+
+                localStorage.setItem(RENDERER_KEY, select.value);
+                location.reload();
             }
+
+            function toggleGrid() {
+                const on = document.getElementById("gridToggle").checked;
+                localStorage.setItem(GRID_KEY, on ? "on" : "off");
+            }
+
+            (function initSettings() {
+                document.getElementById("rendererSelect").value =
+                    localStorage.getItem(RENDERER_KEY) === "webgpu"
+                        ? "webgpu"
+                        : "webgl2";
+                document.getElementById("gridToggle").checked =
+                    localStorage.getItem(GRID_KEY) !== "off";
+                document.getElementById("fpsToggle").checked =
+                    localStorage.getItem(FPS_KEY) !== "off";
+                document.getElementById("hwAccelToggle").checked =
+                    localStorage.getItem(HW_ACCEL_KEY) !== "off";
+                document.getElementById("lowDetailToggle").checked =
+                    localStorage.getItem(LOW_DETAIL_KEY) === "on";
+            })();
 
             function switchTab(tabName, element) {
                 document

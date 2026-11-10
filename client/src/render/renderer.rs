@@ -30,10 +30,12 @@ use crate::{
         buffers::{CameraUniform, EntityInstance},
         camera::{CameraController, SpringPos},
         chat::ChatPanel,
-        colours::{Color, set_light_mode, team_color, theme, with_alpha},
+        colours::{Color, team_color, theme, with_alpha},
         death_screen::DeathScreen,
         minimap,
+        prediction::Prediction,
         scoreboard::{Scoreboard, pill_instance, rounded_ui_instance},
+        settings,
         tank_upgrades::{TankUpgradePanel, default_classes},
         text::{Layer, TextArea, TextBounds, TextRenderer},
         upgrade_panel::UpgradePanel,
@@ -178,19 +180,6 @@ fn push_centered_text<'a>(
     });
 }
 
-/// Same key the menu's theme toggle in index.html writes. Anything but "light" is dark,
-/// matching the menu's default.
-const THEME_STORAGE_KEY: &str = "diep10-theme";
-
-fn sync_theme_from_page() {
-    let light = web_sys::window()
-        .and_then(|w| w.local_storage().ok().flatten())
-        .and_then(|s| s.get_item(THEME_STORAGE_KEY).ok().flatten())
-        .is_some_and(|v| v == "light");
-
-    set_light_mode(light);
-}
-
 fn bold_attrs() -> Attrs<'static> {
     Attrs::new().family(Family::SansSerif).weight(Weight::BOLD)
 }
@@ -257,6 +246,7 @@ pub struct RenderState {
     death: DeathScreen,
 
     player_display: SpringPos,
+    prediction: Prediction,
     camera: CameraController,
     camera_enabled: bool,
     had_player: bool,
@@ -272,6 +262,15 @@ pub struct RenderState {
 
 impl RenderState {
     async fn create_surface_and_adapter(window: Arc<Window>) -> (Surface<'static>, Adapter) {
+        if settings::prefers_webgpu() {
+            if let Some(found) = Self::try_webgpu(Arc::clone(&window)).await {
+                Self::announce_backend("WebGPU");
+                return found;
+            }
+
+            web_sys::console::warn_1(&"WebGPU unavailable, falling back to WebGL2".into());
+        }
+
         let instance = Instance::new(InstanceDescriptor {
             backends: Backends::GL,
             flags: Default::default(),
@@ -286,7 +285,7 @@ impl RenderState {
 
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: settings::power_preference(),
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
                 apply_limit_buckets: true,
@@ -294,9 +293,52 @@ impl RenderState {
             .await
             .expect("neither WebGPU nor WebGL2 is available");
 
-        web_sys::console::log_1(&"wgpu backend: WebGL2".into());
+        Self::announce_backend("WebGL2");
 
         (surface, adapter)
+    }
+
+    /// Gets a WebGPU adapter before touching the canvas: once the canvas has a WebGPU context it
+    /// can't be used for WebGL2, so a failed attempt must not claim it.
+    async fn try_webgpu(window: Arc<Window>) -> Option<(Surface<'static>, Adapter)> {
+        if !wgpu::util::is_browser_webgpu_supported().await {
+            return None;
+        }
+
+        let instance = Instance::new(InstanceDescriptor {
+            backends: Backends::BROWSER_WEBGPU,
+            flags: Default::default(),
+            memory_budget_thresholds: Default::default(),
+            backend_options: Default::default(),
+            display: None,
+        });
+
+        let adapter = instance
+            .request_adapter(&RequestAdapterOptions {
+                power_preference: settings::power_preference(),
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                apply_limit_buckets: true,
+            })
+            .await
+            .ok()?;
+
+        let surface = instance.create_surface(window).ok()?;
+
+        Some((surface, adapter))
+    }
+
+    /// Logs the backend and tells the settings drawer which one is actually running.
+    fn announce_backend(name: &str) {
+        web_sys::console::log_1(&format!("wgpu backend: {name}").into());
+        settings::set_page_text("rendererBadge", name);
+
+        if let Some(body) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.body())
+        {
+            let _ = body.set_attribute("data-renderer", name);
+        }
     }
 
     fn pick_surface_format(formats: &[wgpu::TextureFormat]) -> wgpu::TextureFormat {
@@ -602,6 +644,7 @@ impl RenderState {
             class_panel,
             death,
             player_display: SpringPos::new(PLAYER_DISPLAY_SMOOTH_TIME),
+            prediction: Prediction::default(),
             camera,
             camera_enabled: true,
             had_player: false,
@@ -618,6 +661,23 @@ impl RenderState {
         if width == 0 || height == 0 {
             self.is_surface_configured = false;
             return;
+        }
+
+        // Low detail draws one pixel per CSS pixel instead of per device pixel (a quarter of the
+        // pixels on a 2x screen). The canvas is stretched back to full size by CSS.
+        let (width, height) = if settings::low_detail() {
+            let dpr = web_sys::window().map_or(1.0, |w| w.device_pixel_ratio()).max(1.0);
+            (
+                ((f64::from(width) / dpr).round() as u32).max(1),
+                ((f64::from(height) / dpr).round() as u32).max(1),
+            )
+        } else {
+            (width, height)
+        };
+
+        if let Some(canvas) = self.window.canvas() {
+            canvas.set_width(width);
+            canvas.set_height(height);
         }
 
         let max_dim = self.device.limits().max_texture_dimension_2d;
@@ -1385,9 +1445,9 @@ impl Renderer {
             self.browser_input_handlers.push(closure);
         }
 
-        // The menu's theme toggle saves to localStorage in its own onchange handler, which runs
-        // before the event bubbles up to the document. "storage" covers other tabs.
-        sync_theme_from_page();
+        // The settings drawer saves to localStorage in each control's onchange handler, which
+        // runs before the event bubbles up to the document. "storage" covers other tabs.
+        settings::sync_from_page();
 
         let theme_targets: [(&web_sys::EventTarget, &str); 2] =
             [(&document, "change"), (&browser_window, "storage")];
@@ -1396,7 +1456,7 @@ impl Renderer {
             let redraw_window = Arc::clone(&window);
 
             let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
-                sync_theme_from_page();
+                settings::sync_from_page();
                 redraw_window.request_redraw();
             });
 
@@ -1827,10 +1887,33 @@ impl Renderer {
             b.render_rot = b.last_rot + diff * alpha;
         }
 
-        if let Some(p) = game.my_player_mut() {
-            let smoothed = state.player_display.update(p.render_pos, dt);
+        let move_dir = game.movement_dir;
+        let params = game.move_params;
+        let ping = game.ping_ms;
 
-            p.render_pos = smoothed;
+        match game.my_player_mut() {
+            // predict once the server has told us our speed
+            Some(p) if params.max_speed > 0.0 && !p.dying => {
+                p.render_pos = state.prediction.update(
+                    p.id,
+                    p.pos,
+                    p.last_update_time,
+                    move_dir,
+                    &params,
+                    ping,
+                    now,
+                    dt,
+                );
+
+                state.player_display.snap_to(p.render_pos);
+            }
+
+            Some(p) => {
+                state.prediction.reset();
+                p.render_pos = state.player_display.update(p.render_pos, dt);
+            }
+
+            None => state.prediction.reset(),
         }
     }
 
@@ -2030,7 +2113,12 @@ impl Renderer {
                 shape_type: 2,
                 sides: 0,
                 fill_color: theme().background,
-                border_color: theme().grid,
+                // the grid shader uses the line colour's alpha as line strength
+                border_color: if settings::show_grid() {
+                    theme().grid
+                } else {
+                    with_alpha(theme().grid, 0.0)
+                },
                 border_thickness: 2.0,
                 extra_param: 64.0,
             },
@@ -2426,6 +2514,10 @@ impl Renderer {
             line.clear();
         }
 
+        if settings::show_fps() {
+            let _ = write!(state.net_text[0], "FPS {:.0}  |  ", state.debug_fps);
+        }
+
         match game.ping_ms {
             Some(ping) => {
                 let _ = write!(state.net_text[0], "Ping {ping:.0} ms");
@@ -2440,6 +2532,24 @@ impl Renderer {
             "Players {}  |  Bots {}  |  Shapes {}",
             game.server_players, game.server_bots, game.server_shapes
         );
+    }
+
+    /// Live numbers for the "Technical Stats" box in the settings drawer (every 0.5s).
+    fn publish_page_stats(state: &RenderState, game: &GameState) {
+        settings::set_page_text("fpsCounter", &format!("{:.0} FPS", state.debug_fps));
+
+        let ping = game
+            .ping_ms
+            .map_or_else(|| "-- ms".to_string(), |p| format!("{p:.0} ms"));
+        settings::set_page_text("latencyStat", &ping);
+
+        // wasm linear memory: everything the game allocates lives here
+        let bytes = js_sys::Reflect::get(&wasm_bindgen::memory(), &"buffer".into())
+            .and_then(|b| js_sys::Reflect::get(&b, &"byteLength".into()))
+            .ok()
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        settings::set_page_text("memoryStat", &format!("{:.1} MB", bytes / (1024.0 * 1024.0)));
     }
 
     fn fill_debug_text(state: &mut RenderState, game: &GameState) {
@@ -2725,6 +2835,11 @@ impl ApplicationHandler<RenderState> for Renderer {
             }
 
             WindowEvent::RedrawRequested => {
+                if settings::take_resize_request() {
+                    let size = state.window.inner_size();
+                    state.resize(size.width, size.height);
+                }
+
                 {
                     let mut game = state.game_state.borrow_mut();
 
@@ -2845,6 +2960,7 @@ impl ApplicationHandler<RenderState> for Renderer {
                     state.debug_dirty = false;
 
                     Self::fill_debug_text(state, &game);
+                    Self::publish_page_stats(state, &game);
                 }
 
                 let upgrade_levels = game.upgrade_levels;

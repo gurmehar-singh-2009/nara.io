@@ -78,6 +78,7 @@ pub async fn start() {
         tank_info: Default::default(),
 
         ping_ms: None,
+        move_params: Default::default(),
         server_load: 0.0,
         server_players: 0,
         server_bots: 0,
@@ -93,7 +94,7 @@ pub async fn start() {
         let game_state = Rc::clone(&game_state_for_socket);
 
         spawn_local(async move {
-            Socket::new(game_state, "wss://naraioserver.hackclub.app".into()).await;
+            Socket::new(game_state, "ws://localhost:8080".into()).await;
         });
     });
 

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce, aead::Aead};
 use futures::{SinkExt, StreamExt, channel::mpsc::unbounded};
@@ -154,6 +154,13 @@ impl Socket {
             .unwrap();
         closure.forget();
 
+        spawn_input_pump(
+            Rc::clone(&game),
+            Rc::clone(&send_cipher),
+            Rc::clone(&send_nonce_count),
+            tx.clone(),
+        );
+
         let send_cipher_for_reader = Rc::clone(&send_cipher);
         let recv_cipher_for_reader = Rc::clone(&recv_cipher);
         let recv_nonce_count_for_reader = Rc::clone(&recv_nonce_count);
@@ -164,7 +171,6 @@ impl Socket {
         let mut last_auto_fire = false;
         let mut last_repel = false;
         let mut last_auto_spin = false;
-        let mut last_ping_at = 0.0f64;
 
         spawn_local(async move {
             while let Some(result) = recv.next().await {
@@ -342,13 +348,21 @@ impl Socket {
                                         web_sys::window().unwrap().performance().unwrap().now();
                                     let mut game = game_for_reader.borrow_mut();
 
+                                    // id -> index, built once per packet: a linear search per
+                                    // entry was quadratic with thousands of shapes in view
+                                    let mut bullet_ix: HashMap<u32, usize> =
+                                        index_by_id(game.bullets.iter().map(|b| b.id));
+                                    let mut drone_ix: HashMap<u32, usize> =
+                                        index_by_id(game.drones.iter().map(|d| d.id));
+                                    let mut shape_ix: HashMap<u32, usize> =
+                                        index_by_id(game.shapes.iter().map(|s| s.id));
+                                    let player_ix: HashMap<u32, usize> =
+                                        index_by_id(game.players.iter().map(|p| p.id));
+
                                     for entry in data.data {
                                         match entry.entity_type {
                                             EntityType::Bullet | EntityType::Trap => {
-                                                if let Some(bullet) = game
-                                                    .bullets
-                                                    .iter_mut()
-                                                    .find(|b| b.id == entry.id)
+                                                if let Some(bullet) = bullet_ix.get(&entry.id).copied().map(|i| &mut game.bullets[i])
                                                 {
                                                     if bullet.dead {
                                                         continue;
@@ -413,14 +427,12 @@ impl Socket {
                                                         entry.kind,
                                                         game.my_player_id,
                                                     );
+                                                    bullet_ix.insert(new_bullet.id, game.bullets.len());
                                                     game.bullets.push(new_bullet);
                                                 }
                                             }
                                             EntityType::Drone => {
-                                                if let Some(drone) = game
-                                                    .drones
-                                                    .iter_mut()
-                                                    .find(|d| d.id == entry.id)
+                                                if let Some(drone) = drone_ix.get(&entry.id).copied().map(|i| &mut game.drones[i])
                                                 {
                                                     let t = ((current_time
                                                         - drone.last_update_time)
@@ -450,14 +462,12 @@ impl Socket {
                                                         entry.kind,
                                                         game.my_player_id,
                                                     );
+                                                    drone_ix.insert(new_drone.id, game.drones.len());
                                                     game.drones.push(new_drone);
                                                 }
                                             }
                                             EntityType::Shape => {
-                                                if let Some(shape) = game
-                                                    .shapes
-                                                    .iter_mut()
-                                                    .find(|s| s.id == entry.id)
+                                                if let Some(shape) = shape_ix.get(&entry.id).copied().map(|i| &mut game.shapes[i])
                                                 {
                                                     shape.last_pos = shape.pos;
                                                     shape.pos = glam::Vec2::new(entry.x, entry.y);
@@ -474,14 +484,12 @@ impl Socket {
                                                     new_shape.last_update_time = current_time;
                                                     new_shape.health = entry.health;
                                                     new_shape.max_health = entry.max_health;
+                                                    shape_ix.insert(new_shape.id, game.shapes.len());
                                                     game.shapes.push(new_shape);
                                                 }
                                             }
                                             EntityType::Player => {
-                                                if let Some(player) = game
-                                                    .players
-                                                    .iter_mut()
-                                                    .find(|p| p.id == entry.id)
+                                                if let Some(player) = player_ix.get(&entry.id).copied().map(|i| &mut game.players[i])
                                                 {
                                                     let t = ((current_time
                                                         - player.last_update_time)
@@ -554,28 +562,6 @@ impl Socket {
                                     if let Some([x, y, w, h]) = game.mouse_screen {
                                         let plaintext =
                                             MouseMovePacket::new(x, y, w, h, PACKET_SEED as u64)
-                                                .encode();
-                                        let nonce_counter = {
-                                            let mut counter =
-                                                send_nonce_count_for_reader.borrow_mut();
-                                            let value = *counter;
-                                            *counter += 1;
-                                            value
-                                        };
-                                        let cipher_ref = send_cipher_for_reader.borrow();
-                                        if let Some(cipher) = cipher_ref.as_ref() {
-                                            if let Ok(encrypted) = cipher
-                                                .encrypt(&nonce(nonce_counter), plaintext.as_ref())
-                                            {
-                                                let _ = tx.unbounded_send(encrypted.to_vec());
-                                            }
-                                        }
-                                    }
-
-                                    if current_time - last_ping_at >= PING_INTERVAL_MS {
-                                        last_ping_at = current_time;
-                                        let plaintext =
-                                            PingPacket::new(current_time, PACKET_SEED as u64)
                                                 .encode();
                                         let nonce_counter = {
                                             let mut counter =
@@ -779,6 +765,7 @@ impl Socket {
                                     game.xp_to_next = data.xp_to_next;
                                     game.health = data.health;
                                     game.max_health = data.max_health;
+                                    game.move_params = data.movement;
                                     drop(game);
                                 }
                                 Err(e) => {
@@ -1075,6 +1062,70 @@ fn send_spawn(
             web_sys::console::error_1(&format!("Failed encrypting SpawnReqPacket: {err:?}").into());
         }
     }
+}
+
+/// How often the input pump runs. Movement changes go out on the next run instead of waiting
+/// for the next server update (up to 100ms), which keeps prediction corrections small.
+const INPUT_PUMP_MS: u32 = 16;
+
+/// Sends movement as soon as it changes, and pings on a timer so latency is measured even on
+/// the menu, when no entity updates arrive.
+fn spawn_input_pump(
+    game: Rc<RefCell<GameState>>,
+    cipher: Rc<RefCell<Option<ChaCha20Poly1305>>>,
+    nonce_count: Rc<RefCell<u32>>,
+    tx: futures::channel::mpsc::UnboundedSender<Vec<u8>>,
+) {
+    spawn_local(async move {
+        let mut last_movement: Option<Option<f32>> = None;
+        let mut last_ping_at = f64::NEG_INFINITY;
+
+        loop {
+            gloo_timers::future::TimeoutFuture::new(INPUT_PUMP_MS).await;
+
+            if tx.is_closed() {
+                break;
+            }
+
+            let cipher_ref = cipher.borrow();
+            let Some(cipher) = cipher_ref.as_ref() else {
+                continue;
+            };
+
+            let send = |plaintext: Vec<u8>| {
+                let counter = {
+                    let mut counter = nonce_count.borrow_mut();
+                    let value = *counter;
+                    *counter += 1;
+                    value
+                };
+
+                if let Ok(encrypted) = cipher.encrypt(&nonce(counter), plaintext.as_ref()) {
+                    let _ = tx.unbounded_send(encrypted);
+                }
+            };
+
+            let now = web_sys::window()
+                .and_then(|w| w.performance())
+                .map_or(0.0, |p| p.now());
+
+            if now - last_ping_at >= PING_INTERVAL_MS {
+                last_ping_at = now;
+                send(PingPacket::new(now, PACKET_SEED as u64).encode().to_vec());
+            }
+
+            let game = game.borrow();
+
+            if game.my_player_id.is_some() && last_movement != Some(game.movement_dir) {
+                last_movement = Some(game.movement_dir);
+                send(MovementPacket::new(game.movement_dir, PACKET_SEED as u64).encode().to_vec());
+            }
+        }
+    });
+}
+
+fn index_by_id(ids: impl Iterator<Item = u32>) -> HashMap<u32, usize> {
+    ids.enumerate().map(|(i, id)| (id, i)).collect()
 }
 
 fn bullet_owner_is_mine(owner_info: u32, my_id: Option<u32>) -> bool {
