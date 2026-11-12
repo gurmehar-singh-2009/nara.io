@@ -135,6 +135,8 @@ config_sections! {
         bullet_radius: f32,
         muzzle: f32,
         aim_tolerance: f32,
+        #[serde(default = "default_turret_fov")]
+        fov: f32,
         layouts: Vec<TurretLayout>,
     },
 
@@ -245,6 +247,18 @@ pub struct TurretLayout {
     pub addon: u32,
     pub count: u32,
     pub distance: f32,
+    #[serde(default)]
+    pub fov: Option<f32>,
+}
+
+impl TurretLayout {
+    pub fn fov(&self, turret: &TurretConfig) -> f32 {
+        self.fov.unwrap_or(turret.fov).clamp(1.0, 360.0)
+    }
+}
+
+const fn default_turret_fov() -> f32 {
+    360.0
 }
 
 #[derive(Debug, Clone, Deserialize)]

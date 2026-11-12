@@ -52,6 +52,27 @@ pub struct Bullet {
     pub dying: bool,
     /// The render opacity of the bullet. Used for the death/spawn animation.
     pub render_alpha: f32,
+    pub lead: Option<(glam::Vec2, f64)>,
+}
+
+const LEAD_BLEND: f32 = 0.35;
+
+impl Bullet {
+    pub fn set_lead_once(&mut self, lead: glam::Vec2, now: f64) {
+        if self.lead.is_none() {
+            self.lead = Some((lead, now));
+        }
+    }
+
+    pub fn lead_offset(&self, now: f64) -> glam::Vec2 {
+        let Some((lead, born)) = self.lead else {
+            return glam::Vec2::ZERO;
+        };
+
+        let t = (((now - born) / 1000.0) as f32 / LEAD_BLEND).clamp(0.0, 1.0);
+
+        lead * (1.0 - t * t * (3.0 - 2.0 * t))
+    }
 }
 
 impl Bullet {
@@ -82,6 +103,7 @@ impl Bullet {
             dead: false,
             dying: false,
             render_alpha: 0.0,
+            lead: None,
         }
     }
 

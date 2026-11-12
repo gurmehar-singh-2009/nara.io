@@ -75,6 +75,7 @@ pub struct BarrelDef {
 pub struct TurretDef {
     pub angle: f32,
     pub distance: f32,
+    pub fov: f32,
 }
 
 #[derive(Debug, Clone, bitcode::Encode, bitcode::Decode)]

@@ -13,6 +13,10 @@ pub struct MoveParams {
     pub move_friction: f32,
     /// How fast knockback fades (1/s).
     pub recoil_decay: f32,
+    pub radius: f32,
+    pub map_bound: f32,
+    pub contact: ContactParams,
+    pub shape_friction: f32,
 }
 
 impl Default for MoveParams {
@@ -21,8 +25,131 @@ impl Default for MoveParams {
             max_speed: 0.0,
             move_friction: 4.0,
             recoil_decay: 2.0,
+            radius: 21.0,
+            map_bound: 2500.0,
+            contact: ContactParams::default(),
+            shape_friction: 3.0,
         }
     }
+}
+
+pub const TICK_RATE: f32 = 10.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Encode, Decode)]
+pub struct ContactParams {
+    pub knockback: f32,
+    pub slop: f32,
+    pub correction: f32,
+}
+
+impl Default for ContactParams {
+    fn default() -> Self {
+        Self {
+            knockback: 80.0,
+            slop: 0.05,
+            correction: 0.9,
+        }
+    }
+}
+
+pub fn tank_mass(radius: f32) -> f32 {
+    radius * radius
+}
+
+pub fn shape_mass(radius: f32) -> f32 {
+    radius * radius * 0.5
+}
+
+pub fn shape_radius(kind: u32) -> f32 {
+    match kind {
+        3 => 26.0,
+        _ => 16.0,
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Circle {
+    pub pos: Vec2,
+    pub radius: f32,
+    pub mass: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Contact {
+    pub normal: Vec2,
+    pub push_a: Vec2,
+    pub push_b: Vec2,
+    pub kick_a: Vec2,
+    pub kick_b: Vec2,
+}
+
+pub fn contact(a: Circle, b: Circle, params: &ContactParams, ticks: f32) -> Option<Contact> {
+    let delta = b.pos - a.pos;
+    let dist = delta.length();
+    let min_dist = a.radius + b.radius;
+
+    if dist >= min_dist {
+        return None;
+    }
+
+    let normal = if dist > 1e-4 {
+        delta / dist
+    } else {
+        Vec2::X
+    };
+    let overlap = min_dist - dist;
+
+    let inv_a = 1.0 / a.mass;
+    let inv_b = 1.0 / b.mass;
+    let correction = 1.0 - (1.0 - params.correction.clamp(0.0, 1.0)).powf(ticks);
+    let corr = (overlap - params.slop).max(0.0) * correction / (inv_a + inv_b);
+
+    let total = a.mass + b.mass;
+
+    Some(Contact {
+        normal,
+        push_a: -normal * corr * inv_a,
+        push_b: normal * corr * inv_b,
+        kick_a: -normal * params.knockback * (b.mass / total) * ticks,
+        kick_b: normal * params.knockback * (a.mass / total) * ticks,
+    })
+}
+
+pub fn stop_into(vel: Vec2, toward: Vec2) -> Vec2 {
+    let into = vel.dot(toward);
+
+    if into > 0.0 { vel - toward * into } else { vel }
+}
+
+pub fn push_out_of_box(pos: Vec2, radius: f32, min: Vec2, max: Vec2) -> Option<(Vec2, f32)> {
+    let closest = pos.clamp(min, max);
+    let delta = pos - closest;
+    let dist_sq = delta.length_squared();
+
+    if dist_sq >= radius * radius {
+        return None;
+    }
+
+    if dist_sq > 1e-6 {
+        let dist = dist_sq.sqrt();
+        return Some((delta / dist, radius - dist));
+    }
+
+    let left = pos.x - min.x;
+    let right = max.x - pos.x;
+    let down = pos.y - min.y;
+    let up = max.y - pos.y;
+    let nearest = left.min(right).min(down).min(up);
+
+    Some(if nearest == left {
+        (Vec2::NEG_X, left + radius)
+    } else if nearest == right {
+        (Vec2::X, right + radius)
+    } else if nearest == down {
+        (Vec2::NEG_Y, down + radius)
+    } else {
+        (Vec2::Y, up + radius)
+    })
 }
 
 /// A moving tank: its own velocity plus knockback (recoil, hits, collisions) on top.
@@ -101,11 +228,16 @@ pub fn clamp_to_map(body: &mut Body, bound: f32) {
 mod tests {
     use super::*;
 
-    const PARAMS: MoveParams = MoveParams {
-        max_speed: 168.0,
-        move_friction: 4.0,
-        recoil_decay: 2.0,
-    };
+    const MAX_SPEED: f32 = 168.0;
+
+    fn params() -> MoveParams {
+        MoveParams {
+            max_speed: MAX_SPEED,
+            move_friction: 4.0,
+            recoil_decay: 2.0,
+            ..MoveParams::default()
+        }
+    }
 
     fn run(steps: u32, dt: f32) -> Body {
         let mut body = Body {
@@ -114,10 +246,49 @@ mod tests {
         };
 
         for _ in 0..steps {
-            step(&mut body, Some(0.0), &PARAMS, dt);
+            step(&mut body, Some(0.0), &params(), dt);
         }
 
         body
+    }
+
+    fn circle(x: f32, radius: f32, mass: f32) -> Circle {
+        Circle {
+            pos: Vec2::new(x, 0.0),
+            radius,
+            mass,
+        }
+    }
+
+    #[test]
+    fn contact_splits_by_mass() {
+        let tank = circle(0.0, 21.0, tank_mass(21.0));
+        let shape = circle(30.0, 16.0, shape_mass(16.0));
+        let c = contact(tank, shape, &ContactParams::default(), 1.0).unwrap();
+
+        assert!(c.push_b.x > -c.push_a.x && c.push_a.x < 0.0);
+        assert!(c.kick_b.x > -c.kick_a.x && c.kick_a.x < 0.0);
+        assert!(contact(tank, circle(40.0, 16.0, 1.0), &ContactParams::default(), 1.0).is_none());
+    }
+
+    #[test]
+    fn frame_contacts_add_up_to_a_tick() {
+        let p = ContactParams {
+            slop: 0.0,
+            ..ContactParams::default()
+        };
+        let (mut a, mut b) = (circle(0.0, 21.0, 441.0), circle(30.0, 16.0, 128.0));
+        let tick = contact(a, b, &p, 1.0).unwrap();
+
+        for _ in 0..6 {
+            let c = contact(a, b, &p, 1.0 / 6.0).unwrap();
+            a.pos += c.push_a;
+            b.pos += c.push_b;
+        }
+
+        let left = a.radius + b.radius - a.pos.distance(b.pos);
+        assert!((left - 7.0 * (1.0 - p.correction)).abs() < 1e-3, "{left}");
+        assert!(tick.push_b.x > 0.0);
     }
 
     #[test]
@@ -133,7 +304,7 @@ mod tests {
     #[test]
     fn approaches_top_speed() {
         let body = run(30, 0.1);
-        assert!((body.vel.x - PARAMS.max_speed).abs() < 0.01);
+        assert!((body.vel.x - MAX_SPEED).abs() < 0.01);
         assert!(body.recoil.length() < 0.5);
     }
 }

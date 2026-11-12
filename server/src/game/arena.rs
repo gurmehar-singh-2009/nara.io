@@ -215,37 +215,11 @@ impl Arena {
         let mut normal = Vec2::ZERO;
 
         self.for_walls_in(p - r, p + r, |w| {
-            let closest = pos.clamp(w.min, w.max);
-            let delta = pos - closest;
-            let dist_sq = delta.length_squared();
-
-            if dist_sq >= radius * radius {
-                return false;
+            if let Some((n, depth)) = shared::physics::push_out_of_box(pos, radius, w.min, w.max)
+            {
+                pos += n * depth;
+                normal += n;
             }
-
-            let (n, depth) = if dist_sq > 1e-6 {
-                let dist = dist_sq.sqrt();
-                (delta / dist, radius - dist)
-            } else {
-                let left = pos.x - w.min.x;
-                let right = w.max.x - pos.x;
-                let down = pos.y - w.min.y;
-                let up = w.max.y - pos.y;
-                let nearest = left.min(right).min(down).min(up);
-
-                if nearest == left {
-                    (Vec2::NEG_X, left + radius)
-                } else if nearest == right {
-                    (Vec2::X, right + radius)
-                } else if nearest == down {
-                    (Vec2::NEG_Y, down + radius)
-                } else {
-                    (Vec2::Y, up + radius)
-                }
-            };
-
-            pos += n * depth;
-            normal += n;
 
             false
         });
