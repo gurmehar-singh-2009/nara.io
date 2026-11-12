@@ -30,7 +30,9 @@ pub struct Tanks {
     barrel_timers: Vec<Vec<f32>>,
     stat_levels: Vec<[u8; 8]>,
     stat_points: Vec<u32>,
-    upgrade_offered: Vec<Option<u32>>,
+    /// The class and number of unlocked options last offered, so a newly unlocked option
+    /// (e.g. Smasher at 30 for a Tank that skipped its level 15 pick) gets offered again.
+    upgrade_offered: Vec<Option<(u32, usize)>>,
     sparse: Vec<Option<usize>>,
 }
 
@@ -311,7 +313,7 @@ impl Tanks {
         team != NO_TEAM && team == self.team_of(b)
     }
 
-    pub fn offered_for(&self, id: EntityId) -> Option<u32> {
+    pub fn offered_for(&self, id: EntityId) -> Option<(u32, usize)> {
         let Some(slot) = self.sparse.get(id.index).copied().flatten() else {
             return None;
         };
@@ -323,7 +325,7 @@ impl Tanks {
         self.upgrade_offered[slot]
     }
 
-    pub fn set_offered(&mut self, id: EntityId, tank_id: u32) -> bool {
+    pub fn set_offered(&mut self, id: EntityId, tank_id: u32, option_count: usize) -> bool {
         let Some(slot) = self.sparse.get(id.index).copied().flatten() else {
             return false;
         };
@@ -332,7 +334,7 @@ impl Tanks {
             return false;
         }
 
-        self.upgrade_offered[slot] = Some(tank_id);
+        self.upgrade_offered[slot] = Some((tank_id, option_count));
 
         true
     }

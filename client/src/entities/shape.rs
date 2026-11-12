@@ -47,6 +47,8 @@ pub struct Shape {
     pub render_alpha: f32,
     /// The health bar opacity. 0 when full health (hidden).
     pub health_bar_alpha: f32,
+    /// The radius the server collides this shape with.
+    collision_radius: f32,
 }
 
 impl Shape {
@@ -82,7 +84,13 @@ impl Shape {
             dying: false,
             render_alpha: 0.0,
             health_bar_alpha: 0.0,
+            collision_radius: shared::physics::shape_radius(kind),
         }
+    }
+
+    /// The shape's radius for collisions, matching the server.
+    pub const fn collision_radius(&self) -> f32 {
+        self.collision_radius
     }
 
     /// Advances the shape animation.

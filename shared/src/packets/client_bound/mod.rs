@@ -73,8 +73,12 @@ pub struct BarrelDef {
 
 #[derive(Debug, Clone, Copy, PartialEq, bitcode::Encode, bitcode::Decode)]
 pub struct TurretDef {
+    /// Resting direction relative to the body, in degrees.
     pub angle: f32,
+    /// Distance from the body centre, as a fraction of the body radius.
     pub distance: f32,
+    /// Field of view centred on the resting direction, in degrees. 360 spins freely.
+    pub fov: f32,
 }
 
 #[derive(Debug, Clone, bitcode::Encode, bitcode::Decode)]

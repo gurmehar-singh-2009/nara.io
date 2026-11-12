@@ -28,7 +28,7 @@ use web_sys::{Crypto, HtmlInputElement, window};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::{
-    entities::tank::Tank,
+    entities::tank::{self, Tank},
     render::tank_upgrades,
     structs::game_state::{ArenaInfo, ChatChannel, DeathInfo, GameState, IncomingChat, TankInfo},
 };
@@ -505,15 +505,30 @@ impl Socket {
                                                     player.health = entry.health;
                                                     player.max_health = entry.max_health;
                                                     player.team = entry.team;
+                                                    let aims: Vec<f32> = entry
+                                                        .turrets
+                                                        .iter()
+                                                        .enumerate()
+                                                        .map(|(i, &aim)| {
+                                                            player.turrets.get(i).map_or(
+                                                                aim,
+                                                                |mount| {
+                                                                    tank::turret_raw_aim(
+                                                                        mount, entry.rot, aim,
+                                                                    )
+                                                                },
+                                                            )
+                                                        })
+                                                        .collect();
                                                     player.last_turret_aims =
                                                         if player.render_turret_aims.len()
-                                                            == entry.turrets.len()
+                                                            == aims.len()
                                                         {
                                                             player.render_turret_aims.clone()
                                                         } else {
-                                                            entry.turrets.clone()
+                                                            aims.clone()
                                                         };
-                                                    player.turret_aims = entry.turrets;
+                                                    player.turret_aims = aims;
                                                     player.last_update_time = current_time;
                                                     player.dying = false;
                                                 }

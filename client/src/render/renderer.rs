@@ -33,7 +33,7 @@ use crate::{
         colours::{Color, team_color, theme, with_alpha},
         death_screen::DeathScreen,
         minimap,
-        prediction::Prediction,
+        prediction::{self, Frame, Obstacle, Prediction, World},
         scoreboard::{Scoreboard, pill_instance, rounded_ui_instance},
         settings,
         tank_upgrades::{TankUpgradePanel, default_classes},
@@ -247,6 +247,8 @@ pub struct RenderState {
 
     player_display: SpringPos,
     prediction: Prediction,
+    /// Reused each frame for what the predicted tank can bump into.
+    obstacles: Vec<Obstacle>,
     camera: CameraController,
     camera_enabled: bool,
     had_player: bool,
@@ -645,6 +647,7 @@ impl RenderState {
             death,
             player_display: SpringPos::new(PLAYER_DISPLAY_SMOOTH_TIME),
             prediction: Prediction::default(),
+            obstacles: Vec::new(),
             camera,
             camera_enabled: true,
             had_player: false,
@@ -1841,6 +1844,9 @@ impl Renderer {
             s.render_rot = s.last_rot + diff * alpha;
         }
 
+        // How far our predicted tank is ahead of where the rest of the world sees it.
+        let lead = Self::predict_player(state, game, now, dt);
+
         for b in game.bullets.iter_mut() {
             let alpha = ((now - b.last_update_time) / 100.0).clamp(0.0, 1.0) as f32;
 
@@ -1850,6 +1856,13 @@ impl Renderer {
                 let vel = (b.pos - b.last_pos) / 0.1;
 
                 b.render_pos += vel * dt * b.render_alpha;
+            }
+
+            // our bullets are fired from the server's (older) position of our tank: start them
+            // at the barrel we actually see, then ease them onto their real path
+            if b.is_mine {
+                b.set_lead_once(lead, now);
+                b.render_pos += b.lead_offset(now);
             }
 
             let mut diff = b.rot - b.last_rot;
@@ -1886,35 +1899,102 @@ impl Renderer {
 
             b.render_rot = b.last_rot + diff * alpha;
         }
+    }
 
-        let move_dir = game.movement_dir;
+    /// Moves our own tank with client-side prediction, colliding with what's on screen, and
+    /// draws shapes it has shoved. Expects every entity's interpolated `render_pos` to be set.
+    ///
+    /// Returns how far the predicted tank is from its interpolated server position (zero when
+    /// not predicting).
+    fn predict_player(state: &mut RenderState, game: &mut GameState, now: f64, dt: f32) -> Vec2 {
         let params = game.move_params;
-        let ping = game.ping_ms;
+        let my_id = game.my_player_id;
 
-        match game.my_player_mut() {
-            // predict once the server has told us our speed
-            Some(p) if params.max_speed > 0.0 && !p.dying => {
-                p.render_pos = state.prediction.update(
-                    p.id,
-                    p.pos,
-                    p.last_update_time,
+        let predicting = params.max_speed > 0.0 && game.my_player().is_some_and(|p| !p.dying);
+
+        let mut lead = Vec2::ZERO;
+
+        if predicting {
+            let near = state
+                .prediction
+                .position()
+                .or_else(|| game.my_player().map(|p| p.render_pos))
+                .unwrap_or_default();
+            let reach = params.radius + prediction::OBSTACLE_MARGIN;
+            // the server sends our radius; every tank's is the same base times its level scale
+            let base_radius =
+                params.radius / game.my_player().map_or(1.0, |p| p.scale).max(1e-3);
+
+            let obstacles = &mut state.obstacles;
+            obstacles.clear();
+
+            obstacles.extend(
+                game.shapes
+                    .iter()
+                    .filter(|s| !s.dying && s.render_pos.distance_squared(near) < reach * reach)
+                    .map(|s| Obstacle {
+                        id: s.id,
+                        pos: s.render_pos,
+                        radius: s.collision_radius(),
+                        is_shape: true,
+                    }),
+            );
+
+            obstacles.extend(
+                game.players
+                    .iter()
+                    .filter(|p| Some(p.id) != my_id && !p.dying)
+                    .filter(|p| p.render_pos.distance_squared(near) < reach * reach)
+                    .map(|p| Obstacle {
+                        id: p.id,
+                        pos: p.render_pos,
+                        radius: base_radius * p.scale,
+                        is_shape: false,
+                    }),
+            );
+
+            let move_dir = game.movement_dir;
+            let ping_ms = game.ping_ms;
+            let walls = std::mem::take(&mut game.arena.walls);
+
+            if let Some(p) = game.my_player_mut() {
+                let frame = Frame {
+                    player_id: p.id,
+                    server_pos: p.pos,
+                    snapshot_time: p.last_update_time,
                     move_dir,
-                    &params,
-                    ping,
+                    ping_ms,
                     now,
                     dt,
-                );
+                };
+                let world = World {
+                    obstacles: &state.obstacles,
+                    walls: &walls,
+                };
+
+                // `render_pos` is still the interpolated server position here
+                let predicted = state.prediction.update(&frame, &params, &world);
+                lead = predicted - p.render_pos;
+                p.render_pos = predicted;
 
                 state.player_display.snap_to(p.render_pos);
             }
 
-            Some(p) => {
-                state.prediction.reset();
+            game.arena.walls = walls;
+        } else {
+            state.prediction.reset();
+
+            if let Some(p) = game.my_player_mut() {
                 p.render_pos = state.player_display.update(p.render_pos, dt);
             }
-
-            None => state.prediction.reset(),
         }
+
+        // shoves fade out on their own once the server's version arrives, even after death
+        for s in game.shapes.iter_mut() {
+            s.render_pos += state.prediction.shape_offset(s.id, now);
+        }
+
+        lead
     }
 
     fn update_camera_and_aim(state: &mut RenderState, game: &mut GameState, dt: f32) {

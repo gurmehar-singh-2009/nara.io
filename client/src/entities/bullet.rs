@@ -52,6 +52,33 @@ pub struct Bullet {
     pub dying: bool,
     /// The render opacity of the bullet. Used for the death/spawn animation.
     pub render_alpha: f32,
+    /// For our own bullets: how far our predicted tank was ahead of where the server fired
+    /// from, so the bullet leaves the barrel we see. Eases out as the bullet flies.
+    pub lead: Option<(glam::Vec2, f64)>,
+}
+
+/// How long (seconds) a bullet takes to ease from our barrel onto its real path.
+const LEAD_BLEND: f32 = 0.35;
+
+impl Bullet {
+    /// Records the lead to draw this bullet with, once, when we first see it.
+    pub fn set_lead_once(&mut self, lead: glam::Vec2, now: f64) {
+        if self.lead.is_none() {
+            self.lead = Some((lead, now));
+        }
+    }
+
+    /// How far from its real position to draw the bullet at `now`.
+    pub fn lead_offset(&self, now: f64) -> glam::Vec2 {
+        let Some((lead, born)) = self.lead else {
+            return glam::Vec2::ZERO;
+        };
+
+        let t = (((now - born) / 1000.0) as f32 / LEAD_BLEND).clamp(0.0, 1.0);
+
+        // smoothstep: leaves the barrel straight, then eases onto the real path
+        lead * (1.0 - t * t * (3.0 - 2.0 * t))
+    }
 }
 
 impl Bullet {
@@ -82,6 +109,7 @@ impl Bullet {
             dead: false,
             dying: false,
             render_alpha: 0.0,
+            lead: None,
         }
     }
 

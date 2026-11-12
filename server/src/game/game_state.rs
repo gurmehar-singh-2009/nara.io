@@ -9,7 +9,7 @@ use nanorand::Rng;
 use paris::{error, info, warn};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustrict::CensorStr;
-use shared::physics::{self, Body, MoveParams, SpeedInputs};
+use shared::physics::{self, Body, ContactParams, MoveParams, SpeedInputs};
 use shared::packets::{
     KILLER_ARENA, KILLER_PENTAGON, KILLER_SQUARE, KILLER_TANK, KILLER_TRIANGLE, NO_SENDER, NO_TEAM,
     PACKET_SEED, PlayerUpgradesPacket, TankOption, TankTreePacket, camera_zoom,
@@ -1492,15 +1492,23 @@ impl GameState {
                     )
                 };
 
-                if entities.tanks.offered_for(entity_id) == Some(current_id) {
+                let unlocked = || {
+                    upgrade_ids
+                        .iter()
+                        .filter_map(|uid| find_def(&self.tank_tree, *uid))
+                        .filter(|(_, def)| !def.flags.dev_only)
+                        .filter(|(_, def)| level >= def.level_requirement)
+                };
+
+                // Options unlock at different levels (Twin at 15, Smasher at 30), so re-offer
+                // whenever the unlocked set grows, not just once per class.
+                let unlocked_count = unlocked().count();
+
+                if entities.tanks.offered_for(entity_id) == Some((current_id, unlocked_count)) {
                     continue;
                 }
 
-                let options: Vec<TankOption> = upgrade_ids
-                    .iter()
-                    .filter_map(|uid| find_def(&self.tank_tree, *uid))
-                    .filter(|(_, def)| !def.flags.dev_only)
-                    .filter(|(_, def)| level >= def.level_requirement)
+                let options: Vec<TankOption> = unlocked()
                     .map(|(tier, def)| TankOption {
                         id: def.id,
                         name: def.name.clone(),
@@ -1515,7 +1523,7 @@ impl GameState {
                     continue;
                 }
 
-                entities.tanks.set_offered(entity_id, current_id);
+                entities.tanks.set_offered(entity_id, current_id, unlocked_count);
                 offers.push((conn_id, options));
             }
         }
@@ -2457,14 +2465,21 @@ impl GameState {
             });
 
             if state.aims.len() != count {
-                state.aims = vec![aim; count];
+                state.aims = (0..count).map(|i| aim + mount_angle(i, count)).collect();
                 state.timers = vec![0.0; count];
                 state.targets = vec![None; count];
             }
 
+            let half_fov = layout.fov(cfg).to_radians() * 0.5;
+            let limited = half_fov < std::f32::consts::PI;
+
             for i in 0..count {
-                let mount =
-                    pos + Vec2::from_angle(aim + mount_angle(i, count)) * layout.distance * body;
+                let rest = aim + mount_angle(i, count);
+                let mount = pos + Vec2::from_angle(rest) * layout.distance * body;
+                let in_view = |p: Vec2| {
+                    let to = p - mount;
+                    !limited || angle_diff(to.y.atan2(to.x), rest).abs() <= half_fov
+                };
 
                 self.spatial_hash
                     .get_nearby_into(&mut nearby, mount.x, mount.y, range);
@@ -2483,7 +2498,7 @@ impl GameState {
 
                     let p = entities.positions[id.index];
                     let d = p.distance(mount);
-                    if d > range {
+                    if d > range || !in_view(p) {
                         continue;
                     }
 
@@ -2509,6 +2524,15 @@ impl GameState {
                     let to = target - mount;
                     let want = to.y.atan2(to.x);
                     state.aims[i] = turn_toward(state.aims[i], want, cfg.turn_speed * dt);
+                } else if limited {
+                    // nothing in view: settle back to facing outward
+                    state.aims[i] = turn_toward(state.aims[i], rest, cfg.turn_speed * dt);
+                }
+
+                if limited {
+                    // the mount turns with the body, carrying the turret's arc with it
+                    let off = angle_diff(state.aims[i], rest).clamp(-half_fov, half_fov);
+                    state.aims[i] = rest + off;
                 }
             }
         }
@@ -3117,7 +3141,7 @@ impl GameState {
 
     fn resolve_entity_collisions(&mut self) {
         let dt = (1.0 / TICK_RATE) as f32;
-        let knockback = self.config.player.contact_knockback;
+        let contact_params = contact_params(&self.config);
 
         let mut nearby: Vec<HashEntity> = Vec::with_capacity(64);
 
@@ -3142,7 +3166,13 @@ impl GameState {
                 let dps = self.config.player.body_dps
                     * stat_mult(t.stat_levels, 2, self.config.player.stat_body_dmg_per);
 
-                collidable[i] = Some((entities.positions[i], radius, radius * radius, true, dps));
+                collidable[i] = Some((
+                    entities.positions[i],
+                    radius,
+                    physics::tank_mass(radius),
+                    true,
+                    dps,
+                ));
             } else if let Some(s) = entities.shapes.get(id) {
                 let radius = shape_radius(*s.kind);
                 let dps = match *s.kind {
@@ -3154,7 +3184,7 @@ impl GameState {
                 collidable[i] = Some((
                     entities.positions[i],
                     radius,
-                    radius * radius * 0.5,
+                    physics::shape_mass(radius),
                     false,
                     dps,
                 ));
@@ -3192,30 +3222,26 @@ impl GameState {
                     continue;
                 };
 
-                let delta = pos2 - pos1;
-                let dist = delta.length();
-                let min_dist = r1 + r2;
-
-                if dist >= min_dist {
+                // shared with the client's prediction, so a predicted bump lands the same way
+                let Some(c) = physics::contact(
+                    physics::Circle {
+                        pos: pos1,
+                        radius: r1,
+                        mass: m1,
+                    },
+                    physics::Circle {
+                        pos: pos2,
+                        radius: r2,
+                        mass: m2,
+                    },
+                    &contact_params,
+                    1.0,
+                ) else {
                     continue;
-                }
-
-                let dir = if dist > 1e-4 {
-                    delta / dist
-                } else {
-                    Vec2::new(1.0, 0.0)
                 };
-                let overlap = min_dist - dist;
 
-                let inv1 = 1.0 / m1;
-                let inv2 = 1.0 / m2;
-                let corr = (overlap - self.config.player.collision_slop).max(0.0)
-                    * self.config.player.collision_correction
-                    / (inv1 + inv2);
-
-                // bounce apart, the lighter body taking more of it
-                let kick1 = -dir * knockback * (m2 / (m1 + m2));
-                let kick2 = dir * knockback * (m1 / (m1 + m2));
+                let dir = c.normal;
+                let (kick1, kick2) = (c.kick_a, c.kick_b);
 
                 if is_tank1 {
                     entities.recoil_velocities[i] += kick1;
@@ -3230,26 +3256,18 @@ impl GameState {
                 }
 
                 if is_tank1 {
-                    entities.positions[i] -= dir * corr * inv1;
-
-                    let v = entities.velocities[i];
-                    let into = v.dot(dir);
-                    if into > 0.0 {
-                        entities.velocities[i] = v - dir * into;
-                    }
+                    entities.positions[i] += c.push_a;
+                    entities.velocities[i] = physics::stop_into(entities.velocities[i], dir);
                 } else {
-                    entities.shapes.push_center(id1, -dir * corr * inv1);
+                    entities.shapes.push_center(id1, c.push_a);
                 }
 
                 if is_tank2 {
-                    entities.positions[id2.index] += dir * corr * inv2;
-                    let v = entities.velocities[id2.index];
-                    let into = v.dot(dir);
-                    if into < 0.0 {
-                        entities.velocities[id2.index] = v - dir * into;
-                    }
+                    entities.positions[id2.index] += c.push_b;
+                    entities.velocities[id2.index] =
+                        physics::stop_into(entities.velocities[id2.index], -dir);
                 } else {
-                    entities.shapes.push_center(id2, dir * corr * inv2);
+                    entities.shapes.push_center(id2, c.push_b);
                 }
 
                 let dmg1 = ((dps1 * dt).round() as u32).max(1);
@@ -3882,6 +3900,7 @@ pub(crate) fn turret_mounts(def: &Tank, config: &Config) -> Vec<TurretDef> {
                 .map(|i| TurretDef {
                     angle: mount_angle(i, count).to_degrees(),
                     distance: layout.distance,
+                    fov: layout.fov(&config.turret),
                 })
                 .collect()
         })
@@ -3975,6 +3994,19 @@ pub(crate) fn tank_move_params(config: &Config, level: u32, def_speed: f32, leve
         max_speed: tank_max_speed(config, level, def_speed, levels),
         move_friction: config.player.move_friction,
         recoil_decay: config.bullet.recoil_decay,
+        radius: config.player.radius * level_scale(level),
+        map_bound: config.world.map_bound,
+        contact: contact_params(config),
+        shape_friction: config.world.shape_friction,
+    }
+}
+
+/// Contact response between tanks and shapes; also sent to clients for prediction.
+pub(crate) fn contact_params(config: &Config) -> ContactParams {
+    ContactParams {
+        knockback: config.player.contact_knockback,
+        slop: config.player.collision_slop,
+        correction: config.player.collision_correction,
     }
 }
 
@@ -4006,11 +4038,7 @@ fn shape_max_health(kind: ShapeKind) -> u32 {
 }
 
 fn shape_radius(kind: ShapeKind) -> f32 {
-    match kind {
-        ShapeKind::Square => 16.0,
-        ShapeKind::Triangle => 16.0,
-        ShapeKind::Pentagon => 26.0,
-    }
+    physics::shape_radius(shape_kind_id(kind))
 }
 
 fn shape_kind_id(kind: ShapeKind) -> u32 {
