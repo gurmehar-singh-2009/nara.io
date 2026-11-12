@@ -20,7 +20,11 @@ use crate::{
         spatial_hash::{HashEntity, SpatialHash},
     },
     fs::load_config::Config,
-    game::{arena::Arena, bots::BotBrain, game_state::stat_mult},
+    game::{
+        arena::Arena,
+        bots::BotBrain,
+        game_state::{bullet_base_damage, stat_mult, tank_max_speed},
+    },
 };
 
 pub fn tick_ai(
@@ -83,10 +87,7 @@ pub fn tick_ai(
         } else {
             0.0
         };
-        let my_speed = base_move_speed
-            * (1.0 + (my_level - 1) as f32 * 0.02)
-            * my_def_speed
-            * stat_mult(&my_stats, 7, config.player.stat_move_per);
+        let my_speed = tank_max_speed(config, my_level, my_def_speed, &my_stats);
         let my_power = my_level as f32 * (0.35 + 0.65 * my_hp_frac);
 
         if let Some(target) = brain.target {
@@ -402,11 +403,7 @@ pub fn tick_ai(
                             }
 
                             let lvl = entities.tanks.get(oe).map(|t| *t.level).unwrap_or(my_level);
-                            support_dps += config.bullet.base_dmg
-                                * (1.0
-                                    + config.player.stat_bullet_dmg_per
-                                        * lvl.saturating_sub(1) as f32)
-                                / 0.45
+                            support_dps += bullet_base_damage(config, lvl) / 0.45
                                 * config.bots.support_dps_frac
                                 * foe_strength;
 

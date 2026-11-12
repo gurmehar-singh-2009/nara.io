@@ -21,6 +21,8 @@ pub struct Shapes {
     orbit_radii: Vec<f32>,
     orbit_angles: Vec<f32>,
     orbit_speeds: Vec<f32>,
+    /// Knockback from hits and collisions. Moves the orbit centre and fades out.
+    velocities: Vec<Vec2>,
 
     sparse: Vec<Option<usize>>,
 }
@@ -52,6 +54,7 @@ impl Shapes {
             orbit_radii: Vec::with_capacity(max_shapes),
             orbit_angles: Vec::with_capacity(max_shapes),
             orbit_speeds: Vec::with_capacity(max_shapes),
+            velocities: Vec::with_capacity(max_shapes),
             sparse: Vec::with_capacity(max_shapes),
         }
     }
@@ -87,6 +90,7 @@ impl Shapes {
         self.orbit_radii.push(orbit_radius);
         self.orbit_angles.push(orbit_angle);
         self.orbit_speeds.push(orbit_speed);
+        self.velocities.push(Vec2::ZERO);
         self.sparse[id.index] = Some(slot);
     }
 
@@ -107,6 +111,7 @@ impl Shapes {
         self.orbit_radii.swap(slot, last);
         self.orbit_angles.swap(slot, last);
         self.orbit_speeds.swap(slot, last);
+        self.velocities.swap(slot, last);
 
         self.ids.pop();
         self.kinds.pop();
@@ -117,6 +122,7 @@ impl Shapes {
         self.orbit_radii.pop();
         self.orbit_angles.pop();
         self.orbit_speeds.pop();
+        self.velocities.pop();
 
         self.sparse[id.index] = None;
         if slot != last {
@@ -153,8 +159,15 @@ impl Shapes {
         })
     }
 
-    pub fn tick(&mut self, dt: f32, positions: &mut [glam::Vec2]) {
+    pub fn tick(&mut self, dt: f32, friction: f32, positions: &mut [glam::Vec2]) {
+        let k = friction.max(0.01);
+        let decay = (-k * dt).exp();
+        let travel = (1.0 - decay) / k;
+
         for i in 0..self.ids.len() {
+            self.centers[i] += self.velocities[i] * travel;
+            self.velocities[i] *= decay;
+
             self.rotations[i] += self.rotation_speeds[i] * dt;
             self.orbit_angles[i] += self.orbit_speeds[i] * dt;
 
@@ -178,6 +191,14 @@ impl Shapes {
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
+    }
+
+    pub fn push_velocity(&mut self, id: EntityId, dv: Vec2) {
+        if let Some(slot) = self.sparse.get(id.index).copied().flatten() {
+            if self.ids.get(slot).copied() == Some(id) {
+                self.velocities[slot] += dv;
+            }
+        }
     }
 
     pub fn push_center(&mut self, id: EntityId, push: Vec2) {

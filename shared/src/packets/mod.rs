@@ -36,10 +36,13 @@ pub const KILLER_TRIANGLE: u8 = 2;
 pub const KILLER_PENTAGON: u8 = 3;
 pub const KILLER_ARENA: u8 = u8::MAX;
 
-/// Zooms out at the same rate the tank grows (`level_scale`), so your tank keeps the same
-/// on-screen size and the view widens with it.
+/// How much of the tank's growth the camera zooms out to cancel. 0.5 is diep (tank and view
+/// both grow ~24% by level 45). 0.75 widens the view more (~39%) while the tank still grows
+/// on screen (~12%). 1.0 would keep the tank the same size on screen.
+const ZOOM_OUT_RATE: f32 = 0.75;
+
 pub fn camera_zoom(level: u32, field_factor: f32) -> f32 {
-    BASE_ZOOM * field_factor.max(0.1) / level_scale(level)
+    BASE_ZOOM * field_factor.max(0.1) / level_scale(level).powf(ZOOM_OUT_RATE)
 }
 
 pub fn cursor_world_offset(

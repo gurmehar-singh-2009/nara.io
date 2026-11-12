@@ -165,7 +165,6 @@ impl Drones {
         }
     }
 
-    /// Keeps a drone the right size for its owner as the owner levels up.
     pub fn set_owner_scale(&mut self, i: usize, scale: f32) {
         self.radii[i] = self.base_radii[i] * scale;
     }

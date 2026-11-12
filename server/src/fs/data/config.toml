@@ -18,6 +18,8 @@ view_exit_rad = 1500
 num_teams = 2
 base_push = 900
 shape_clearance = 40
+# knocked-back shapes lose this much speed per second (exponential)
+shape_friction = 3.0
 
 chat_window_ms = 10_000
 chat_burst = 5
@@ -25,7 +27,7 @@ chat_min_gap_ms = 400
 chat_max_chars = 120
 
 [player]
-speed = 140
+speed = 168
 radius = 21
 default_health = 100
 health_mult = 2.0
@@ -36,7 +38,13 @@ assist_window = 10.0
 
 collision_slop = 0.05
 collision_correction = 0.9
-acceleration = 1200
+# velocity eases toward the input direction at this rate (1/s): ~0.25s to most of top
+# speed, with a short glide when you let go. diep uses ~2.6, which feels floatier.
+move_friction = 4.0
+# top speed is divided by this per level: level 45 is ~35% slower before movement points
+speed_level_falloff = 1.01
+# bounce when bodies overlap (units/s, split by mass so shapes fly more than tanks)
+contact_knockback = 80
 
 body_dps = 30
 square_contact_dps = 10
@@ -44,29 +52,43 @@ triangle_contact_dps = 18
 pentagon_contact_dps = 30
 
 stat_max_level = 7
-stat_max_health_bonus = 40
+# Every stat tops out at a moderate bonus so a maxed stat helps without breaking the game.
+# Values in brackets are the effect at 7 points.
+stat_max_health_bonus = 24    # health per point [+168, ~1.6x at level 45]
 
-stat_regen_base = 0.002
-stat_regen_per = 0.006
-stat_body_dmg_per = 0.5
-stat_bullet_speed_per = 0.08
-stat_bullet_dmg_per = 0.30
-stat_bullet_hp_per = 0.5
-stat_reload_per = 0.10
-stat_move_per = 0.10
+# regen, fraction of max health per second: 0.4%/s base, +0.4%/s per point [3.2%/s]
+stat_regen_base = 0.004
+stat_regen_per = 0.004
+# extra regen once you haven't lost health for `hyper_regen_delay` seconds
+hyper_regen = 0.05
+hyper_regen_delay = 20.0
+
+# linear bonuses: 1 + per * points
+stat_body_dmg_per = 0.15      # [2.05x]
+stat_bullet_speed_per = 0.06  # [1.42x]
+stat_bullet_dmg_per = 0.12    # [1.84x]
+stat_bullet_hp_per = 0.15     # [2.05x] penetration
+
+# compounding: factor ^ points
+stat_reload_factor = 0.95     # reload time [0.70x, ~1.43x fire rate]
+stat_move_factor = 1.035      # top speed [1.27x]
 
 [bullet]
 size = 0
 
 speed_mult = 2.6
-base_dmg = 8
+# damage before stat, barrel and level multipliers (was unused: damage used base_health)
+base_dmg = 10
 dmg_per_level = 0.045
 lifetime = 1.3
 base_health = 10
 
 recoil_impulse = 12
+# knockback (recoil, hits, collisions) fades at this rate (1/s)
 recoil_decay = 2
 recoil_max = 400
+# push a bullet gives what it hits, scaled by the bullet's share of the mass
+knockback = 80
 scatter_degrees = 10.0
 
 [trap]
@@ -129,9 +151,7 @@ max_travel = 4.0
 death_cam = 3.0
 
 [drone]
-# drone radius = barrel width / 2 * size_mult. 1.6 makes the triangle about as wide as the
-# narrow end of the spawner, so drones fill its mouth.
-size_mult = 1.6
+size_mult = 1.28
 speed_mult = 1.6
 speed_per_stat = 0.15
 drag = 2.634

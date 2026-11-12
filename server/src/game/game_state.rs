@@ -9,6 +9,7 @@ use nanorand::Rng;
 use paris::{error, info, warn};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustrict::CensorStr;
+use shared::physics::{self, Body, MoveParams, SpeedInputs};
 use shared::packets::{
     KILLER_ARENA, KILLER_PENTAGON, KILLER_SQUARE, KILLER_TANK, KILLER_TRIANGLE, NO_SENDER, NO_TEAM,
     PACKET_SEED, PlayerUpgradesPacket, TankOption, TankTreePacket, camera_zoom,
@@ -164,7 +165,9 @@ pub struct GameState {
     nav_danger: Vec<f32>,
     nav_version: u64,
     bullet_hash: SpatialHash,
-    mouse_offsets: HashMap<u32, Vec2>,
+    /// Last cursor packet: x, y, window width, window height (screen pixels).
+    mouse_screens: HashMap<u32, [f32; 4]>,
+    regen: HashMap<EntityId, RegenState>,
     lua_events: Vec<GameEvents>,
     arena_version_sent: u64,
     spectators: HashMap<u32, SpectatorCam>,
@@ -264,7 +267,8 @@ impl GameState {
             nav_danger: vec![0.0; NAV_LEN],
             nav_version: 0,
             bullet_hash: SpatialHash::new(),
-            mouse_offsets: HashMap::new(),
+            mouse_screens: HashMap::new(),
+            regen: HashMap::new(),
             lua_events: Vec::new(),
             arena_version_sent: 0,
             spectators: HashMap::new(),
@@ -697,7 +701,7 @@ impl GameState {
                 self.watch.remove(id);
                 self.teams.remove(id);
                 self.chat_times.remove(id);
-                self.mouse_offsets.remove(id);
+                self.mouse_screens.remove(id);
                 self.spectators.remove(id);
                 self.spawn_ticks.remove(id);
             }
@@ -1351,30 +1355,20 @@ impl GameState {
     }
 
     fn record_mouse(&mut self, id: u32, x: u16, y: u16, width: u16, height: u16) {
-        if x > width || y > height {
+        if x > width || y > height || width == 0 || height == 0 {
             return;
         }
 
-        let Some(&entity_id) = self.players.get(&id) else {
+        if !self.players.contains_key(&id) {
             return;
-        };
+        }
 
-        let zoom = {
-            let entities = self.scripting.entities_mut();
-            match entities.tanks.get(entity_id) {
-                Some(tank) => camera_zoom(*tank.level, tank.tank_type.field_factor),
-                None => return,
-            }
-        };
-
-        let Some((dx, dy)) =
-            cursor_world_offset(x as f32, y as f32, width as f32, height as f32, zoom)
-        else {
-            return;
-        };
-
-        let offset = Vec2::new(dx, dy).clamp_length_max(self.config.world.view_enter_rad);
-        self.mouse_offsets.insert(id, offset);
+        // Kept in screen space: the world offset depends on the zoom, which changes as the tank
+        // levels, so it's converted every tick instead of once per packet.
+        self.mouse_screens.insert(
+            id,
+            [f32::from(x), f32::from(y), f32::from(width), f32::from(height)],
+        );
     }
 
     fn record_aim_sample(&mut self, id: u32, dir: f32) {
@@ -1719,7 +1713,7 @@ impl GameState {
             shapes, positions, ..
         } = &mut *entities;
 
-        shapes.tick(dt, positions);
+        shapes.tick(dt, self.config.world.shape_friction, positions);
     }
 
     fn prune_damage_log(&mut self) {
@@ -1751,11 +1745,17 @@ impl GameState {
     }
 
     fn regen_health(&mut self) {
-        if self.tick_count % 10 != 0 {
+        // once a second
+        if self.tick_count % TICK_RATE as u64 != 0 {
             return;
         }
 
+        let cfg = &self.config.player;
+        let tick = self.tick_count;
+        let hyper_after = (cfg.hyper_regen_delay * TICK_RATE as f32) as u64;
+        let regen = &mut self.regen;
         let mut entities = self.scripting.entities_mut();
+
         for i in 0..entities.alive.len() {
             if !entities.alive[i] {
                 continue;
@@ -1766,26 +1766,47 @@ impl GameState {
                 generation: entities.generations[i],
             };
 
-            let (max_health, regen) = match entities.tanks.get(id) {
-                Some(t) => (
-                    *t.max_health,
-                    (*t.max_health as f32
-                        * (self.config.player.stat_regen_base
-                            + self.config.player.stat_regen_per * t.stat_levels[0] as f32))
-                        as u32,
-                ),
-
-                None => continue,
+            let Some((max_health, regen_points)) =
+                entities.tanks.get(id).map(|t| (*t.max_health, t.stat_levels[0]))
+            else {
+                continue;
             };
 
             let Some(health) = entities.health_mut(id) else {
                 continue;
             };
 
-            if *health > 0 && *health < max_health {
-                *health = (*health + regen.max(1)).min(max_health);
+            let state = regen.entry(id).or_insert(RegenState {
+                carry: 0.0,
+                last_health: *health,
+                last_hit: tick,
+            });
+
+            // any drop since last second counts as being hit, whatever did it
+            if *health < state.last_health {
+                state.last_hit = tick;
             }
+
+            if *health > 0 && *health < max_health {
+                let mut rate = cfg.stat_regen_base + cfg.stat_regen_per * f32::from(regen_points);
+
+                if tick.saturating_sub(state.last_hit) >= hyper_after {
+                    rate += cfg.hyper_regen;
+                }
+
+                // keep the fraction so slow regen on low max health isn't rounded away
+                state.carry += max_health as f32 * rate;
+                let whole = state.carry.floor();
+                state.carry -= whole;
+                *health = (*health + whole as u32).min(max_health);
+            } else {
+                state.carry = 0.0;
+            }
+
+            state.last_health = *health;
         }
+
+        regen.retain(|id, _| entities.is_alive(*id));
     }
 
     fn clamp_shape_positions(&mut self) {
@@ -1906,19 +1927,9 @@ impl GameState {
             let arena = self.scripting.arena();
 
             for (eid, move_dir, level, speed_mult, stats) in tank_jobs {
-                let max_speed = self.config.player.speed
-                    * (1.0 + (level - 1) as f32 * 0.02)
-                    * speed_mult
-                    * stat_mult(&stats, 7, self.config.player.stat_move_per);
+                let params = tank_move_params(&self.config, level, speed_mult, &stats);
 
-                step_tank_velocity(
-                    &mut entities,
-                    eid.index,
-                    move_dir,
-                    max_speed,
-                    dt,
-                    &self.config,
-                );
+                step_tank_velocity(&mut entities, eid.index, move_dir, &params, dt);
                 clamp_tank_position(&mut entities, eid.index, &self.config);
 
                 let radius = self.config.player.radius * level_scale(level);
@@ -2357,6 +2368,12 @@ impl GameState {
                 tank.xp.1,
                 health,
                 *tank.max_health,
+                tank_move_params(
+                    &self.config,
+                    *tank.level,
+                    tank.tank_type.speed,
+                    tank.stat_levels,
+                ),
                 PACKET_SEED as u64,
             );
             self.connections.send_to(conn_id, packet);
@@ -2541,9 +2558,8 @@ impl GameState {
                 1.0
             };
 
-            let reload = cfg.reload / stat_mult(&stats, 6, self.config.player.stat_reload_per);
-            let base_damage = self.config.bullet.base_health
-                * (1.0 + self.config.bullet.dmg_per_level * (level - 1) as f32);
+            let reload = cfg.reload * reload_mult(&stats, &self.config);
+            let base_damage = bullet_base_damage(&self.config, level);
             let damage = ((base_damage
                 * cfg.damage_mult
                 * stat_mult(&stats, 5, self.config.player.stat_bullet_dmg_per)
@@ -2749,20 +2765,26 @@ impl GameState {
             let owner = entities.drones.owner(i);
             let owner_pos = entities.positions[owner.index];
 
-            let Some((firing, repel, aim, scale)) = entities
-                .tanks
-                .get(owner)
-                .map(|t| (*t.auto_fire, *t.repel, *t.aim, level_scale(*t.level)))
-            else {
+            let Some((firing, repel, aim, scale, zoom)) = entities.tanks.get(owner).map(|t| {
+                (
+                    *t.auto_fire,
+                    *t.repel,
+                    *t.aim,
+                    level_scale(*t.level),
+                    camera_zoom(*t.level, t.tank_type.field_factor),
+                )
+            }) else {
                 continue;
             };
 
             entities.drones.set_owner_scale(i, scale);
 
+            let view_rad = self.config.world.view_enter_rad;
             let cursor = entity_to_conn
                 .get(&owner)
-                .and_then(|conn| self.mouse_offsets.get(conn))
-                .map(|offset| owner_pos + *offset);
+                .and_then(|conn| self.mouse_screens.get(conn))
+                .and_then(|&[x, y, w, h]| cursor_world_offset(x, y, w, h, zoom))
+                .map(|(dx, dy)| owner_pos + Vec2::new(dx, dy).clamp_length_max(view_rad));
 
             let ai_target = entities
                 .drones
@@ -3094,7 +3116,8 @@ impl GameState {
     }
 
     fn resolve_entity_collisions(&mut self) {
-        let dt = 0.1;
+        let dt = (1.0 / TICK_RATE) as f32;
+        let knockback = self.config.player.contact_knockback;
 
         let mut nearby: Vec<HashEntity> = Vec::with_capacity(64);
 
@@ -3189,6 +3212,22 @@ impl GameState {
                 let corr = (overlap - self.config.player.collision_slop).max(0.0)
                     * self.config.player.collision_correction
                     / (inv1 + inv2);
+
+                // bounce apart, the lighter body taking more of it
+                let kick1 = -dir * knockback * (m2 / (m1 + m2));
+                let kick2 = dir * knockback * (m1 / (m1 + m2));
+
+                if is_tank1 {
+                    entities.recoil_velocities[i] += kick1;
+                } else {
+                    entities.shapes.push_velocity(id1, kick1);
+                }
+
+                if is_tank2 {
+                    entities.recoil_velocities[id2.index] += kick2;
+                } else {
+                    entities.shapes.push_velocity(id2, kick2);
+                }
 
                 if is_tank1 {
                     entities.positions[i] -= dir * corr * inv1;
@@ -3385,6 +3424,25 @@ impl GameState {
 
             for (bullet_index, target_id, damage, owner) in &entity_hits {
                 entities.bullets.record_hit(*bullet_index, *target_id);
+
+                // push the target along the bullet's path, by the bullet's share of the mass
+                if let Some((target_radius, is_tank)) =
+                    entity_collision_radius(&entities, *target_id, &self.config)
+                {
+                    let bullet_r = entities.bullets.radius_at(*bullet_index);
+                    let bullet_mass = bullet_r * bullet_r;
+                    let target_mass =
+                        target_radius * target_radius * if is_tank { 1.0 } else { 0.5 };
+                    let push = entities.bullets.velocity_at(*bullet_index).normalize_or_zero()
+                        * self.config.bullet.knockback
+                        * (bullet_mass / (bullet_mass + target_mass));
+
+                    if is_tank {
+                        entities.recoil_velocities[target_id.index] += push;
+                    } else {
+                        entities.shapes.push_velocity(*target_id, push);
+                    }
+                }
 
                 // bots remember who shot them (players & other bots)
                 if let Some(&t_conn) = entity_to_conn.get(target_id) {
@@ -3651,14 +3709,12 @@ impl GameState {
             let level = *t.level;
             let tank_scale = level_scale(level);
             let stats = *t.stat_levels;
-            let reload_time =
-                *t.reload_time / stat_mult(&stats, 6, self.config.player.stat_reload_per);
+            let reload_time = *t.reload_time * reload_mult(&stats, &self.config);
             let damage_mult = stat_mult(&stats, 5, self.config.player.stat_bullet_dmg_per);
             let speed_mult = stat_mult(&stats, 3, self.config.player.stat_bullet_speed_per);
             let hp_mult = stat_mult(&stats, 4, self.config.player.stat_bullet_hp_per);
 
-            let base_damage = self.config.bullet.base_health
-                * (1.0 + self.config.bullet.dmg_per_level * (level - 1) as f32);
+            let base_damage = bullet_base_damage(&self.config, level);
             let base_speed = self.config.player.speed * self.config.bullet.speed_mult;
 
             let owner_conn = entity_to_conn.get(&id).copied().unwrap_or(u32::MAX);
@@ -3890,8 +3946,41 @@ fn find_def(tree: &TankTree, id: u32) -> Option<(u32, &Tank)> {
     })
 }
 
+/// Linear stat bonus: `1 + per * points`.
 pub(crate) fn stat_mult(levels: &[u8; 8], idx: usize, per: f32) -> f32 {
     1.0 + per * levels[idx] as f32
+}
+
+/// Reload time multiplier. Each point compounds, like diep, so it never reaches zero.
+pub(crate) fn reload_mult(levels: &[u8; 8], config: &Config) -> f32 {
+    config.player.stat_reload_factor.powi(i32::from(levels[6]))
+}
+
+/// Top movement speed. Movement points compound, and every level makes the tank a bit slower
+/// so big tanks don't outrun small ones.
+pub(crate) fn tank_max_speed(config: &Config, level: u32, def_speed: f32, levels: &[u8; 8]) -> f32 {
+    physics::tank_max_speed(SpeedInputs {
+        base_speed: config.player.speed,
+        class_speed: def_speed,
+        move_factor: config.player.stat_move_factor,
+        move_points: levels[7],
+        level_falloff: config.player.speed_level_falloff,
+        level,
+    })
+}
+
+/// Everything `physics::step` needs for a tank; also sent to its client for prediction.
+pub(crate) fn tank_move_params(config: &Config, level: u32, def_speed: f32, levels: &[u8; 8]) -> MoveParams {
+    MoveParams {
+        max_speed: tank_max_speed(config, level, def_speed, levels),
+        move_friction: config.player.move_friction,
+        recoil_decay: config.bullet.recoil_decay,
+    }
+}
+
+/// Bullet damage before the barrel, stat and bot multipliers.
+pub(crate) fn bullet_base_damage(config: &Config, level: u32) -> f32 {
+    config.bullet.base_dmg * (1.0 + config.bullet.dmg_per_level * level.saturating_sub(1) as f32)
 }
 
 fn stat_points_for_level(level: u32) -> u32 {
@@ -4128,6 +4217,16 @@ fn death_packet(
     )
 }
 
+/// Per-tank regen bookkeeping.
+struct RegenState {
+    /// Fractional health not yet applied.
+    carry: f32,
+    /// Health after the last regen pass, to spot damage.
+    last_health: u32,
+    /// Tick the tank last lost health. Hyper regen kicks in a while after this.
+    last_hit: u64,
+}
+
 fn log_damage(
     log: &mut DamageLog,
     entities: &Entities,
@@ -4219,28 +4318,20 @@ fn step_tank_velocity(
     entities: &mut Entities,
     index: usize,
     move_dir: Option<f32>,
-    max_speed: f32,
+    params: &MoveParams,
     dt: f32,
-    config: &Config,
 ) {
-    let desired = match move_dir {
-        Some(dir) => Vec2::new(dir.cos(), dir.sin()) * max_speed,
-        None => Vec2::ZERO,
+    let mut body = Body {
+        pos: entities.positions[index],
+        vel: entities.velocities[index],
+        recoil: entities.recoil_velocities[index],
     };
 
-    let vel = entities.velocities[index];
-    let delta = desired - vel;
-    let max_step = config.player.acceleration * dt;
+    physics::step(&mut body, move_dir, params, dt);
 
-    let new_vel = if delta.length_squared() > max_step * max_step {
-        vel + delta.normalize_or_zero() * max_step
-    } else {
-        desired
-    };
-
-    entities.velocities[index] = new_vel;
-    entities.positions[index] += (new_vel + entities.recoil_velocities[index]) * dt;
-    entities.recoil_velocities[index] /= 1.0 + config.bullet.recoil_decay * dt;
+    entities.positions[index] = body.pos;
+    entities.velocities[index] = body.vel;
+    entities.recoil_velocities[index] = body.recoil;
 }
 
 fn clamp_tank_position(entities: &mut Entities, index: usize, config: &Config) {

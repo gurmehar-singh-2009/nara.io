@@ -3140,6 +3140,7 @@ version = "0.1.0"
 dependencies = [
  "bitcode",
  "bytes",
+ "glam",
  "mlua",
  "obfstr",
  "snafu",

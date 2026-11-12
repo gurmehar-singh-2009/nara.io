@@ -10,5 +10,7 @@ junk_packet! {
         pub xp_to_next: u32,
         pub health: u32,
         pub max_health: u32,
+        /// For client-side prediction of the player's own tank.
+        pub movement: crate::physics::MoveParams,
     }
 }

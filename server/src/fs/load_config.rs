@@ -54,6 +54,8 @@ config_sections! {
         num_teams: u8,
         base_push: f32,
         shape_clearance: f32,
+        /// How fast knocked-back shapes slow down (1/s).
+        shape_friction: f32,
 
         chat_window_ms: u64,
         chat_burst: usize,
@@ -73,7 +75,12 @@ config_sections! {
 
         collision_slop: f32,
         collision_correction: f32,
-        acceleration: f32,
+        /// How fast velocity eases toward the input direction (1/s). Higher is snappier.
+        move_friction: f32,
+        /// Each level divides top speed by this (big tanks are slower).
+        speed_level_falloff: f32,
+        /// Push speed when bodies overlap, split by mass.
+        contact_knockback: f32,
 
         body_dps: f32,
         square_contact_dps: f32,
@@ -85,12 +92,14 @@ config_sections! {
 
         stat_regen_base: f32,
         stat_regen_per: f32,
+        hyper_regen: f32,
+        hyper_regen_delay: f32,
         stat_body_dmg_per: f32,
         stat_bullet_speed_per: f32,
         stat_bullet_dmg_per: f32,
         stat_bullet_hp_per: f32,
-        stat_reload_per: f32,
-        stat_move_per: f32,
+        stat_reload_factor: f32,
+        stat_move_factor: f32,
     },
 
     BulletConfig {
@@ -105,6 +114,8 @@ config_sections! {
         recoil_impulse: f32,
         recoil_decay: f32,
         recoil_max: f32,
+        /// Push a bullet gives what it hits, scaled by the bullet's share of the mass.
+        knockback: f32,
         scatter_degrees: f32,
     },
 
