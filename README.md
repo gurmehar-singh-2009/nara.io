@@ -118,11 +118,18 @@ Below is a list I will keep updated with what files I have used AI in:
 - /client/src/render/shader/fragment.wgsl - originally written myself, used ai to optimize it for bad devices.
 - /client/src/render/shader/text.wgsl - AI was used to write the SDF shader (previously, we used 8 instances offsetted to mimic text borders, SDF should make it crispier).
 
-# Screenshots
-### THESE SCREENSHOTS ARE OUTDATED!
-## Homescreen
-<img width="1920" height="937" alt="image" src="https://github.com/user-attachments/assets/e9a8bb48-dac9-4561-881a-24a86728237d" />
-<img width="1920" height="931" alt="image" src="https://github.com/user-attachments/assets/06827095-90b6-4dd1-a951-4ba5a03214b0" />
+## Screenshots
 
-## In game
-<img width="1920" height="931" alt="image" src="https://github.com/user-attachments/assets/3e4540b5-b792-462c-bafe-deaa9bc09907" />
+### Homescreen
+<img width="1919" height="943" alt="image" src="https://github.com/user-attachments/assets/f5662a52-aac6-45c6-ba4d-d8410ff72dcc" />
+<img width="1919" height="940" alt="image" src="https://github.com/user-attachments/assets/fc6f2977-54e5-442c-8759-ff2a1abc65e7" />
+
+### In game
+#### With grid.
+<img width="1919" height="939" alt="image" src="https://github.com/user-attachments/assets/f681e6b6-4e3a-4ce6-b1db-7e1f9018673f" />
+<img width="1919" height="932" alt="image" src="https://github.com/user-attachments/assets/9fd4ef9a-a868-49ea-b6d5-6bb096a0188e" />
+
+#### No grid.
+<img width="1919" height="935" alt="image" src="https://github.com/user-attachments/assets/20e2e7d4-fd5d-4e46-8ff5-0c319fac681b" />
+<img width="1919" height="932" alt="image" src="https://github.com/user-attachments/assets/fe5b1b92-50fd-4468-84aa-32905eddac3f" />
+
