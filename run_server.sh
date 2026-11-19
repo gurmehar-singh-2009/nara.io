@@ -1,2 +1,3 @@
 cd server
-cargo run --release
+cargo build --release --bin gen_tanks
+cargo run --release --bin server
